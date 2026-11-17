@@ -4,7 +4,7 @@ QiDock turns the Windows 10 and 11 taskbar into a floating glass dock with a wid
 
 ![QiDock: the dock with real app icons, widget tiles and desktop widgets on Windows](docs/images/hero.png)
 
-▶ **[Watch the 46-second tour](docs/qidock-promo.mp4)**
+⬇ **[Download QiDock.exe](https://github.com/qidock/qidock/releases/latest)** (portable, no install) · ▶ **[Watch the 46-second tour](docs/qidock-promo.mp4)**
 
 | | |
 |:---:|:---:|
