@@ -1,0 +1,84 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Neutral materials preserve application icon colors and wallpaper visibility. -->
+    <SolidColorBrush x:Key="TextPrimary" Color="#FF202329" />
+    <SolidColorBrush x:Key="TextSecondary" Color="#FF5E6570" />
+    <SolidColorBrush x:Key="WindowsLogoBrush" Color="#FF54B6F5" />
+    <SolidColorBrush x:Key="SurfaceKeyboardFocus" Color="#FFCFDFEC" />
+    <SolidColorBrush x:Key="MenuStroke" Color="#26000000" />
+    <LinearGradientBrush x:Key="MenuMaterial" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#F9FCFCFD" Offset="0" />
+        <GradientStop Color="#FAF2F3F5" Offset="1" />
+    </LinearGradientBrush>
+    <!-- Frosted side panels (notification and control center): the tint over the blurred desktop and the tiles on it. -->
+    <Color x:Key="PanelFrostTint">#C8F2F3F6</Color>
+    <SolidColorBrush x:Key="PanelTile" Color="#A6FFFFFF" />
+    <SolidColorBrush x:Key="PanelTileHover" Color="#D9FFFFFF" />
+    <SolidColorBrush x:Key="PanelTileStroke" Color="#14000000" />
+    <!-- Widget popups stay nearly opaque regardless of the surface-opacity setting so text behind never shows through. -->
+    <LinearGradientBrush x:Key="WidgetPopupFill" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#FCFCFCFD" Offset="0" />
+        <GradientStop Color="#FDF2F3F5" Offset="1" />
+    </LinearGradientBrush>
+    <!-- Dock icon tiles (each app sits on a rounded glass square). -->
+    <SolidColorBrush x:Key="DockTileFill" Color="#12000000" />
+    <SolidColorBrush x:Key="DockTileStroke" Color="#14000000" />
+    <!-- Hover "liquid glass" bubble behind a dock icon: frosted fill, bright rim, top sheen. -->
+    <LinearGradientBrush x:Key="GlassFill" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#80FFFFFF" Offset="0" />
+        <GradientStop Color="#40FFFFFF" Offset="0.55" />
+        <GradientStop Color="#66FFFFFF" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="GlassRim" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#E6FFFFFF" Offset="0" />
+        <GradientStop Color="#55FFFFFF" Offset="0.4" />
+        <GradientStop Color="#26000000" Offset="0.62" />
+        <GradientStop Color="#99FFFFFF" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="GlassSheen" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#59FFFFFF" Offset="0" />
+        <GradientStop Color="#00FFFFFF" Offset="0.5" />
+    </LinearGradientBrush>
+    <SolidColorBrush x:Key="GlassShade" Color="#26000000" />
+    <LinearGradientBrush x:Key="StartTileFill" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#FF2A2D33" Offset="0" />
+        <GradientStop Color="#FF14161A" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="StartLogoBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#FFFFFFFF" Offset="0" />
+        <GradientStop Color="#FFB4BBC6" Offset="1" />
+    </LinearGradientBrush>
+    <SolidColorBrush x:Key="SurfacePopup" Color="#FFF8F9FB" />
+    <SolidColorBrush x:Key="StrokeSubtle" Color="#20000000" />
+    <SolidColorBrush x:Key="StrokeFocus" Color="#FF457DA8" />
+    <SolidColorBrush x:Key="SurfaceHover" Color="#12000000" />
+    <SolidColorBrush x:Key="SurfacePressed" Color="#20000000" />
+    <SolidColorBrush x:Key="SurfaceSelected" Color="#0C000000" />
+    <SolidColorBrush x:Key="SurfaceDanger" Color="#FFC43846" />
+    <SolidColorBrush x:Key="NotificationBrush" Color="#FFD22D42" />
+    <SolidColorBrush x:Key="IndicatorBrush" Color="#AA303A47" />
+    <SolidColorBrush x:Key="IndicatorForegroundBrush" Color="#FF192A39" />
+    <LinearGradientBrush x:Key="DockMaterial" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#E2F6F7FA" Offset="0" />
+        <GradientStop Color="#ECF3F4F7" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="DockBorderMaterial" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#B0FFFFFF" Offset="0" />
+        <GradientStop Color="#22000000" Offset="1" />
+    </LinearGradientBrush>
+    <SolidColorBrush x:Key="SettingsBackground" Color="#FFF7F8FA" />
+    <SolidColorBrush x:Key="SettingsSidebar" Color="#FFEEF0F3" />
+    <SolidColorBrush x:Key="SettingsControl" Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="SettingsControlHover" Color="#FFE8EBEF" />
+    <SolidColorBrush x:Key="AccentBrush" Color="#FF245D87" />
+    <SolidColorBrush x:Key="AccentText" Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="DangerText" Color="#FFAF2338" />
+    <SolidColorBrush x:Key="MenuDivider" Color="#20000000" />
+    <SolidColorBrush x:Key="SettingsSidebarOverlay" Color="#24FFFFFF" />
+    <SolidColorBrush x:Key="CaptionCloseForeground" Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="WidgetTileFill" Color="#0C000000" />
+    <SolidColorBrush x:Key="WidgetTileStroke" Color="#14000000" />
+    <SolidColorBrush x:Key="WidgetHoverOverlay" Color="#0E000000" />
+    <SolidColorBrush x:Key="WidgetPressedOverlay" Color="#1C000000" />
+    <SolidColorBrush x:Key="WidgetTrack" Color="#22000000" />
+</ResourceDictionary>

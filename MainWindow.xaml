@@ -1,0 +1,402 @@
+﻿<Window x:Class="QiDock.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:QiDock.Services"
+        xmlns:ctl="clr-namespace:QiDock"
+        Title="QiDock"
+        Width="360"
+        Height="{StaticResource DockWindowHeight}"
+        MinHeight="0"
+        FontFamily="{StaticResource InterfaceFont}"
+        UseLayoutRounding="True" SnapsToDevicePixels="True"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        Topmost="True"
+        WindowStartupLocation="Manual"
+        Closing="Window_Closing"
+        SourceInitialized="Window_SourceInitialized"
+        Closed="Window_Closed">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        <ContextMenu x:Key="AppContextMenu" x:Shared="False" StaysOpen="True" Opened="DockContextMenu_Opened" Closed="DockContextMenu_Closed">
+            <Separator Tag="JumpListCommands" Visibility="Collapsed" />
+            <MenuItem Header="{local:Loc OpenApplication}" Icon="{StaticResource IconOpen}" Tag="ActivateDockApp" Click="DockAppContextMenu_Click" />
+            <MenuItem Header="{local:Loc Pin}" Icon="{StaticResource IconPin}" Tag="PinDockApp" Visibility="Collapsed" Click="PinDockApp_Click" />
+            <MenuItem Header="{local:Loc Unpin}" Icon="{StaticResource IconUnpin}" Tag="UnpinDockApp" Visibility="Collapsed" Click="UnpinDockApp_Click" />
+            <Separator Tag="RunningCommandsDivider" />
+            <MenuItem Header="{local:Loc CloseApplication}" Icon="{StaticResource IconClose}" Tag="CloseDockApp" Click="CloseDockApp_Click" />
+            <MenuItem Header="{local:Loc Terminate}" Icon="{StaticResource IconTerminate}" Style="{StaticResource DestructiveMenuItem}" Tag="TerminateDockApp" Click="TerminateDockApp_Click" />
+        </ContextMenu>
+        <ContextMenu x:Key="DockContextMenu" x:Shared="False" Opened="DockContextMenu_Opened" Closed="DockContextMenu_Closed">
+            <MenuItem Header="{local:Loc Settings}" Icon="{StaticResource IconSettings}" Click="OpenSettings_Click" />
+            <Separator />
+            <MenuItem Header="{local:Loc Exit}" Icon="{StaticResource IconExit}" Click="ExitQiDock_Click" />
+        </ContextMenu>
+
+        <!-- Keyboard focus only (Tab, arrows): a ring around the icon. A mouse click leaves no box behind. -->
+        <Style x:Key="DockFocusRing">
+            <Setter Property="Control.Template">
+                <Setter.Value>
+                    <ControlTemplate>
+                        <Border Width="{DynamicResource DockTileSize}" Height="{DynamicResource DockTileSize}" Margin="0,-2,0,0"
+                                HorizontalAlignment="Center" VerticalAlignment="Top" CornerRadius="{DynamicResource DockGlassRadius}"
+                                BorderThickness="2" BorderBrush="#CC0A84FF" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="DockButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="FocusVisualStyle" Value="{StaticResource DockFocusRing}" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Width" Value="{DynamicResource DockCellSize}" />
+            <Setter Property="Height" Value="{DynamicResource DockCellHeight}" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.95" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Surface" Background="{TemplateBinding Background}"
+                                BorderBrush="Transparent" BorderThickness="0"
+                                CornerRadius="{StaticResource ControlRadius}" Padding="{TemplateBinding Padding}">
+                            <Grid>
+                                <!-- Icon centred in the cell (equal room above and below), running dot in the room under it. -->
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                <Ellipse x:Name="ActiveIndicator" Height="4" Width="4" Margin="0,0,0,1"
+                                         Fill="{DynamicResource IndicatorBrush}" VerticalAlignment="Bottom"
+                                         HorizontalAlignment="Center" Visibility="Collapsed" />
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Surface" Property="Background" Value="Transparent" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Surface" Property="Opacity" Value="0.48" />
+                            </Trigger>
+                            <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                                <Setter TargetName="ActiveIndicator" Property="Visibility" Value="Visible" />
+                                <Setter TargetName="ActiveIndicator" Property="Opacity" Value="0.55" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsForeground}" Value="True">
+                                <Setter TargetName="ActiveIndicator" Property="Visibility" Value="Visible" />
+                                <Setter TargetName="ActiveIndicator" Property="Opacity" Value="1.0" />
+                                <Setter TargetName="ActiveIndicator" Property="Width" Value="5" />
+                                <Setter TargetName="ActiveIndicator" Property="Height" Value="5" />
+                                <Setter TargetName="ActiveIndicator" Property="Fill" Value="{DynamicResource IndicatorForegroundBrush}" />
+                            </DataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="PreviewCloseButton" TargetType="Button">
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+            <Setter Property="Background" Value="{DynamicResource SurfaceSelected}" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Surface" Background="{TemplateBinding Background}" CornerRadius="7">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Surface" Property="Background" Value="{DynamicResource SurfaceDanger}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Surface" Property="Background" Value="{DynamicResource SurfaceDanger}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <DataTemplate x:Key="DockAppIconTemplate">
+            <Button Style="{StaticResource DockButton}" Tag="{Binding ExecutablePath}"
+                    Click="DockApp_Click" AutomationProperties.Name="{Binding Name}"
+                    ToolTip="{Binding Name}" ToolTipService.InitialShowDelay="650" ToolTipService.Placement="Top" ToolTipService.VerticalOffset="-44" ContextMenu="{StaticResource AppContextMenu}"
+                    Loaded="DockAppButton_Loaded"
+                    PreviewMouseLeftButtonDown="DockApp_PreviewMouseLeftButtonDown"
+                    PreviewMouseLeftButtonUp="DockApp_PreviewMouseLeftButtonUp"
+                    PreviewMouseMove="DockApp_PreviewMouseMove"
+                    PreviewKeyDown="DockApp_PreviewKeyDown"
+                    AllowDrop="True"
+                    Drop="DockApp_Drop"
+                    DragOver="DockApp_DragOver"
+                    MouseEnter="DockApp_MouseEnter" MouseLeave="DockApp_MouseLeave">
+                <!-- Each app sits on its own rounded glass tile; the whole tile magnifies. -->
+                <Grid x:Name="IconTile" Width="{DynamicResource DockTileSize}" Height="{DynamicResource DockTileSize}"
+                      RenderTransformOrigin="0.5,1">
+                    <Grid.RenderTransform>
+                        <TransformGroup>
+                            <ScaleTransform ScaleX="1" ScaleY="1" />
+                            <TranslateTransform Y="0" />
+                        </TransformGroup>
+                    </Grid.RenderTransform>
+                    <Border Background="{DynamicResource DockTileFill}" BorderBrush="{DynamicResource DockTileStroke}"
+                            BorderThickness="1" CornerRadius="{DynamicResource DockTileRadius}" />
+                    <Image Source="{Binding Icon}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"
+                           Width="{DynamicResource DockIconSize}" Height="{DynamicResource DockIconSize}" />
+                    <Ellipse Width="10" Height="10" Fill="{DynamicResource NotificationBrush}" Margin="0,-2,-2,0"
+                             Stroke="{DynamicResource SurfacePopup}" StrokeThickness="1"
+                             HorizontalAlignment="Right" VerticalAlignment="Top"
+                             Visibility="{Binding HasNotification, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                </Grid>
+            </Button>
+        </DataTemplate>
+    </Window.Resources>
+
+    <Grid x:Name="DockHost" PreviewMouseRightButtonUp="DockHost_PreviewMouseRightButtonUp">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="{Binding Source={StaticResource DockHeadroom}}" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Border x:Name="DockHitBackground" Grid.Row="1" Background="#01000000" />
+        <Border x:Name="DockSurface" Grid.Row="1" HorizontalAlignment="Stretch" Padding="{StaticResource DockPadding}"
+                AllowDrop="True" DragOver="DockSurface_DragOver" Drop="DockSurface_Drop"
+                Margin="{StaticResource DockInset}" VerticalAlignment="Bottom"
+                Background="{DynamicResource DockMaterial}" BorderBrush="{DynamicResource DockBorderMaterial}" BorderThickness="1"
+                CornerRadius="{StaticResource DockRadius}"
+                MouseEnter="DockSurface_MouseEnter" MouseMove="DockSurface_MouseMove" MouseLeave="DockSurface_MouseLeave">
+            <Border.RenderTransform>
+                <TranslateTransform x:Name="DockSurfaceTranslate" Y="0" />
+            </Border.RenderTransform>
+            <Border.Effect>
+                <DropShadowEffect Color="#000000" BlurRadius="20" ShadowDepth="3" Direction="270" Opacity="0.38" RenderingBias="Performance" />
+            </Border.Effect>
+        <ctl:UnclippedStackPanel x:Name="DockRow" Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+        <ctl:UnclippedStackPanel x:Name="DockContents" Orientation="Horizontal" HorizontalAlignment="Left"
+                    VerticalAlignment="Center">
+            <Button x:Name="StartButton" Style="{StaticResource DockButton}" Click="StartButton_Click" PreviewMouseLeftButtonDown="StartButton_PreviewMouseLeftButtonDown"
+                    AutomationProperties.Name="{local:Loc Start}" ToolTip="{local:Loc Start}" ToolTipService.InitialShowDelay="650" ToolTipService.Placement="Top" ToolTipService.VerticalOffset="-44">
+                <Grid Width="{DynamicResource DockTileSize}" Height="{DynamicResource DockTileSize}"
+                      RenderTransformOrigin="0.5,1">
+                    <Grid.RenderTransform>
+                        <TransformGroup>
+                            <ScaleTransform ScaleX="1" ScaleY="1" />
+                            <TranslateTransform Y="0" />
+                        </TransformGroup>
+                    </Grid.RenderTransform>
+                    <!-- Start: a dark tile with a silver four-pane logo. -->
+                    <Border Background="{DynamicResource StartTileFill}" BorderBrush="{DynamicResource DockTileStroke}"
+                            BorderThickness="1" CornerRadius="{DynamicResource DockTileRadius}" />
+                    <Path Width="{DynamicResource DockIconSize}" Height="{DynamicResource DockIconSize}" Stretch="Uniform" Margin="5"
+                          Fill="{DynamicResource StartLogoBrush}"
+                          Data="M0,0 H10 V10 H0 Z M12,0 H22 V10 H12 Z M0,12 H10 V22 H0 Z M12,12 H22 V22 H12 Z" />
+                </Grid>
+            </Button>
+            <!-- AppGrid: every installed app as a full-screen grid (also Ctrl+Alt+Down). -->
+            <Button x:Name="AppGridButton" Style="{StaticResource DockButton}" Click="AppGridButton_Click"
+                    AutomationProperties.Name="{local:Loc AppGridTitle}" ToolTip="{local:Loc AppGridTitle}" ToolTipService.InitialShowDelay="650" ToolTipService.Placement="Top" ToolTipService.VerticalOffset="-44">
+                <Grid Width="{DynamicResource DockTileSize}" Height="{DynamicResource DockTileSize}" RenderTransformOrigin="0.5,1">
+                    <Grid.RenderTransform>
+                        <TransformGroup>
+                            <ScaleTransform ScaleX="1" ScaleY="1" />
+                            <TranslateTransform Y="0" />
+                        </TransformGroup>
+                    </Grid.RenderTransform>
+                    <Border BorderBrush="#40FFFFFF" BorderThickness="1" CornerRadius="{DynamicResource DockTileRadius}">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#FF8E8E99" Offset="0" />
+                                <GradientStop Color="#FF4B4B55" Offset="1" />
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+                    <!-- A 3×3 grid of colored dots. -->
+                    <Viewbox Margin="5" Stretch="Uniform">
+                        <Canvas Width="24" Height="24">
+                            <Rectangle Canvas.Left="2" Canvas.Top="2" Width="5.5" Height="5.5" RadiusX="1.6" RadiusY="1.6" Fill="#FFFF5F57" />
+                            <Rectangle Canvas.Left="9.25" Canvas.Top="2" Width="5.5" Height="5.5" RadiusX="1.6" RadiusY="1.6" Fill="#FFFFBD2E" />
+                            <Rectangle Canvas.Left="16.5" Canvas.Top="2" Width="5.5" Height="5.5" RadiusX="1.6" RadiusY="1.6" Fill="#FF28C840" />
+                            <Rectangle Canvas.Left="2" Canvas.Top="9.25" Width="5.5" Height="5.5" RadiusX="1.6" RadiusY="1.6" Fill="#FF0A84FF" />
+                            <Rectangle Canvas.Left="9.25" Canvas.Top="9.25" Width="5.5" Height="5.5" RadiusX="1.6" RadiusY="1.6" Fill="#FFBF5AF2" />
+                            <Rectangle Canvas.Left="16.5" Canvas.Top="9.25" Width="5.5" Height="5.5" RadiusX="1.6" RadiusY="1.6" Fill="#FFFF375F" />
+                            <Rectangle Canvas.Left="2" Canvas.Top="16.5" Width="5.5" Height="5.5" RadiusX="1.6" RadiusY="1.6" Fill="#FF64D2FF" />
+                            <Rectangle Canvas.Left="9.25" Canvas.Top="16.5" Width="5.5" Height="5.5" RadiusX="1.6" RadiusY="1.6" Fill="#FFFFD60A" />
+                            <Rectangle Canvas.Left="16.5" Canvas.Top="16.5" Width="5.5" Height="5.5" RadiusX="1.6" RadiusY="1.6" Fill="#FF30D158" />
+                        </Canvas>
+                    </Viewbox>
+                </Grid>
+            </Button>
+            <!-- Show desktop: windows step aside, the desktop stays clean (wallpaper and the widget bar). -->
+            <Button x:Name="DesktopButton" Style="{StaticResource DockButton}" Click="DesktopButton_Click"
+                    AutomationProperties.Name="{local:Loc Desktop}" ToolTip="{local:Loc Desktop}" ToolTipService.InitialShowDelay="650" ToolTipService.Placement="Top" ToolTipService.VerticalOffset="-44">
+                <Grid Width="{DynamicResource DockTileSize}" Height="{DynamicResource DockTileSize}" RenderTransformOrigin="0.5,1">
+                    <Grid.RenderTransform>
+                        <TransformGroup>
+                            <ScaleTransform ScaleX="1" ScaleY="1" />
+                            <TranslateTransform Y="0" />
+                        </TransformGroup>
+                    </Grid.RenderTransform>
+                    <Border BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="{DynamicResource DockTileRadius}">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                <GradientStop Color="#FF6FD0FF" Offset="0" />
+                                <GradientStop Color="#FF1E6FE8" Offset="1" />
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+                    <Viewbox Margin="8" Stretch="Uniform">
+                        <Canvas Width="24" Height="24">
+                            <Rectangle Canvas.Left="2" Canvas.Top="3.5" Width="20" Height="13.5" RadiusX="2.2" RadiusY="2.2" Fill="#F2FFFFFF" />
+                            <Rectangle Canvas.Left="3.6" Canvas.Top="5.1" Width="16.8" Height="10.3" RadiusX="1.2" RadiusY="1.2">
+                                <Rectangle.Fill>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                        <GradientStop Color="#FF7FC8FF" Offset="0" />
+                                        <GradientStop Color="#FF2A5BD7" Offset="0.6" />
+                                        <GradientStop Color="#FF7B4BE0" Offset="1" />
+                                    </LinearGradientBrush>
+                                </Rectangle.Fill>
+                            </Rectangle>
+                            <Path Data="M9 17 L8.2 20.2 H15.8 L15 17 Z" Fill="#F2FFFFFF" />
+                            <Rectangle Canvas.Left="6.5" Canvas.Top="19.8" Width="11" Height="1.6" RadiusX="0.8" RadiusY="0.8" Fill="#F2FFFFFF" />
+                        </Canvas>
+                    </Viewbox>
+                </Grid>
+            </Button>
+            <!-- Desktop files: the real desktop with its icons (windows step aside). -->
+            <Button x:Name="FilesDesktopButton" Style="{StaticResource DockButton}" Click="FilesDesktopButton_Click"
+                    AutomationProperties.Name="{local:Loc DesktopFiles}" ToolTip="{local:Loc DesktopFiles}" ToolTipService.InitialShowDelay="650" ToolTipService.Placement="Top" ToolTipService.VerticalOffset="-44">
+                <Grid Width="{DynamicResource DockTileSize}" Height="{DynamicResource DockTileSize}" RenderTransformOrigin="0.5,1">
+                    <Grid.RenderTransform>
+                        <TransformGroup>
+                            <ScaleTransform ScaleX="1" ScaleY="1" />
+                            <TranslateTransform Y="0" />
+                        </TransformGroup>
+                    </Grid.RenderTransform>
+                    <Border BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="{DynamicResource DockTileRadius}">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                <GradientStop Color="#FFFFD772" Offset="0" />
+                                <GradientStop Color="#FFF39A1E" Offset="1" />
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+                    <Viewbox Margin="9" Stretch="Uniform">
+                        <Canvas Width="24" Height="24">
+                            <Path Data="M3 6.5 A1.5 1.5 0 0 1 4.5 5 H9.2 L11 7 H19.5 A1.5 1.5 0 0 1 21 8.5 V18 A1.5 1.5 0 0 1 19.5 19.5 H4.5 A1.5 1.5 0 0 1 3 18 Z" Fill="#F2FFFFFF" />
+                            <Rectangle Canvas.Left="6.2" Canvas.Top="10.6" Width="3.2" Height="3.2" RadiusX="0.7" RadiusY="0.7" Fill="#FFF5A524" />
+                            <Rectangle Canvas.Left="10.4" Canvas.Top="10.6" Width="3.2" Height="3.2" RadiusX="0.7" RadiusY="0.7" Fill="#FF3F9BF5" />
+                            <Rectangle Canvas.Left="14.6" Canvas.Top="10.6" Width="3.2" Height="3.2" RadiusX="0.7" RadiusY="0.7" Fill="#FF34C759" />
+                            <Rectangle Canvas.Left="6.2" Canvas.Top="14.6" Width="3.2" Height="3.2" RadiusX="0.7" RadiusY="0.7" Fill="#FFFF6B5E" />
+                            <Rectangle Canvas.Left="10.4" Canvas.Top="14.6" Width="3.2" Height="3.2" RadiusX="0.7" RadiusY="0.7" Fill="#FFAF7BF0" />
+                        </Canvas>
+                    </Viewbox>
+                </Grid>
+            </Button>
+            <!-- Notifications: a bell with a red badge for unread ones; click for the list. -->
+            <Button x:Name="NotificationsButton" Style="{StaticResource DockButton}" Click="NotificationsButton_Click"
+                    AutomationProperties.Name="{local:Loc NotificationsTitle}" ToolTip="{local:Loc NotificationsTitle}" ToolTipService.InitialShowDelay="650" ToolTipService.Placement="Top" ToolTipService.VerticalOffset="-44">
+                <Grid Width="{DynamicResource DockTileSize}" Height="{DynamicResource DockTileSize}" RenderTransformOrigin="0.5,1">
+                    <Grid.RenderTransform>
+                        <TransformGroup>
+                            <ScaleTransform ScaleX="1" ScaleY="1" />
+                            <TranslateTransform Y="0" />
+                        </TransformGroup>
+                    </Grid.RenderTransform>
+                    <Border BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="{DynamicResource DockTileRadius}">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                <GradientStop Color="#FF4A4A50" Offset="0" />
+                                <GradientStop Color="#FF1F1F23" Offset="1" />
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+                    <!-- The glyph scales with the tile (a fixed size plus margins would not fit and get clipped off-center). -->
+                    <Viewbox Margin="10" Stretch="Uniform" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                        <Canvas Width="24" Height="24">
+                            <Path Data="{StaticResource IconBell}" Stroke="#F2FFFFFF" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                        </Canvas>
+                    </Viewbox>
+                    <Border x:Name="NotificationsBadge" Visibility="Collapsed" MinWidth="19" Height="19" CornerRadius="9.5" Padding="5,0" Background="#FFFF3B30"
+                            BorderBrush="#F2FFFFFF" BorderThickness="1.5" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-5,-5,0" IsHitTestVisible="False">
+                        <TextBlock x:Name="NotificationsBadgeText" FontSize="10.5" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-1,0,0" />
+                    </Border>
+                </Grid>
+            </Button>
+            <Border Width="1" Height="22" Background="{DynamicResource StrokeSubtle}" Margin="3,0,4,5" Visibility="Collapsed" />
+            <ItemsControl x:Name="PinnedApps" ItemTemplate="{StaticResource DockAppIconTemplate}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+            </ItemsControl>
+            <Border x:Name="RunningAppsDivider" Width="1" Height="22" Background="{DynamicResource StrokeSubtle}" Margin="4,0,4,0" VerticalAlignment="Center" Visibility="Collapsed" Opacity="0.7" />
+            <ItemsControl x:Name="RunningApps" ItemTemplate="{StaticResource DockAppIconTemplate}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+            </ItemsControl>
+            <Border x:Name="TrashDivider" Width="1" Height="22" Background="{DynamicResource StrokeSubtle}" Margin="4,0,4,0" VerticalAlignment="Center" Opacity="0.7" />
+            <!-- Downloads: the newest downloads as a grid; drag them out or open the folder. -->
+            <Button x:Name="DownloadsButton" Style="{StaticResource DockButton}" Click="DownloadsButton_Click"
+                    AutomationProperties.Name="{local:Loc DownloadsTitle}" ToolTip="{local:Loc DownloadsTitle}" ToolTipService.InitialShowDelay="650" ToolTipService.Placement="Top" ToolTipService.VerticalOffset="-44">
+                <Grid Width="{DynamicResource DockTileSize}" Height="{DynamicResource DockTileSize}" RenderTransformOrigin="0.5,1">
+                    <Grid.RenderTransform>
+                        <TransformGroup>
+                            <ScaleTransform ScaleX="1" ScaleY="1" />
+                            <TranslateTransform Y="0" />
+                        </TransformGroup>
+                    </Grid.RenderTransform>
+                    <Border BorderBrush="#40FFFFFF" BorderThickness="1" CornerRadius="{DynamicResource DockTileRadius}">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                <GradientStop Color="#FF5AB4FF" Offset="0" />
+                                <GradientStop Color="#FF1A6BDB" Offset="1" />
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+                    <Viewbox Margin="10" Stretch="Uniform" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                        <Canvas Width="24" Height="24">
+                            <Path Data="{StaticResource IconArrowDown}" Stroke="#FFFFFFFF" StrokeThickness="2.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                        </Canvas>
+                    </Viewbox>
+                </Grid>
+            </Button>
+            <!-- Recycle Bin: open it, drop files on it to move them there, right-click to empty. -->
+            <Button x:Name="TrashButton" Style="{StaticResource DockButton}" Click="TrashButton_Click" AllowDrop="True"
+                    DragOver="TrashButton_DragOver" Drop="TrashButton_Drop" PreviewMouseRightButtonUp="TrashButton_PreviewMouseRightButtonUp"
+                    AutomationProperties.Name="{local:Loc RecycleBin}" ToolTip="{local:Loc RecycleBin}" ToolTipService.InitialShowDelay="650" ToolTipService.Placement="Top" ToolTipService.VerticalOffset="-44">
+                <Grid Width="{DynamicResource DockTileSize}" Height="{DynamicResource DockTileSize}" RenderTransformOrigin="0.5,1">
+                    <Grid.RenderTransform>
+                        <TransformGroup>
+                            <ScaleTransform ScaleX="1" ScaleY="1" />
+                            <TranslateTransform Y="0" />
+                        </TransformGroup>
+                    </Grid.RenderTransform>
+                    <Image x:Name="TrashIcon" Width="{DynamicResource DockTileSize}" Height="{DynamicResource DockTileSize}" RenderOptions.BitmapScalingMode="HighQuality" />
+                </Grid>
+            </Button>
+            <TextBlock x:Name="StatusText" Foreground="{DynamicResource DangerText}" FontSize="{StaticResource TextSizeCaption}"
+                       MaxWidth="280" VerticalAlignment="Center" Margin="8,0" TextWrapping="Wrap">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Style.Triggers>
+                            <Trigger Property="Text" Value="">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+        </ctl:UnclippedStackPanel>
+        <ContentControl x:Name="WidgetHost" VerticalAlignment="Top" Margin="2,1,0,0" Focusable="False" Visibility="Collapsed" />
+        </ctl:UnclippedStackPanel>
+    </Border>
+    <Border x:Name="DockEdgeTrigger" Grid.Row="1" VerticalAlignment="Bottom" Height="2" Background="#01000000"
+            MouseEnter="DockEdgeTrigger_MouseEnter" MouseLeave="DockEdgeTrigger_MouseLeave" />
+    </Grid>
+</Window>
