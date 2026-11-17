@@ -82,7 +82,7 @@ public sealed class AppVolumeWidget : DockWidget
         {
             var muted = app.Muted;
             mute.Content = Ui.Icon(muted ? "IconVolumeMute" : "IconVolume", 13, brushKey: muted ? "TextSecondary" : "TextPrimary");
-            percent.Text = "%" + (int)slider.Value;
+            percent.Text = UiText.Percent((int)slider.Value);
             slider.Opacity = muted ? 0.45 : 1;
         }
         mute = Ui.IconButton(new ContentControl(), (_, _) =>

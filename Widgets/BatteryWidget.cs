@@ -133,7 +133,7 @@ public sealed class BatteryWidget : DockWidget
 
         var color = ColorFor(state);
         var ring = new RingGauge { Width = 72, Height = 72, Thickness = 6, TrackBrush = Ui.Solid("#47808080"), Stroke = color, Value = state.Percent };
-        var percent = Ui.Text(state.Percent.ToString(CultureInfo.InvariantCulture) + "%", 17, FontWeights.Bold);
+        var percent = Ui.Text(UiText.Percent(state.Percent), 17, FontWeights.Bold);
         percent.HorizontalAlignment = HorizontalAlignment.Center;
         percent.VerticalAlignment = VerticalAlignment.Center;
         var face = new Grid { Width = 72, Height = 72 };

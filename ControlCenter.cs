@@ -334,9 +334,9 @@ public sealed partial class ControlCenter : EdgePanel
     {
         var status = battery.Charging ? UiText.Get("CcCharging")
             : battery.OnAc ? UiText.Get("CcPlugged")
-            : battery.Remaining is { } left ? UiText.Format("CcOnBattery", $"{(int)left.TotalHours} sa {left.Minutes} dk")
+            : battery.Remaining is { } left ? UiText.Format("CcOnBattery", UiText.Format("HoursMinutes", (int)left.TotalHours, left.Minutes))
             : UiText.Get("CcBattery");
-        var percent = Ui.Text($"%{battery.Percent}", 20, FontWeights.SemiBold);
+        var percent = Ui.Text(UiText.Percent(battery.Percent), 20, FontWeights.SemiBold);
         percent.VerticalAlignment = VerticalAlignment.Center;
         percent.Margin = new Thickness(0, 0, 14, 0);
         var fill = battery.Percent <= 20 && !battery.OnAc ? Ui.Solid("#FFFF453A") : battery.Charging ? Ui.Solid("#FF30D158") : On;

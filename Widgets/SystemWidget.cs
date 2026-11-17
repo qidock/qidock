@@ -112,7 +112,7 @@ public sealed class SystemWidget : DockWidget
         SetBar(_ramBar, _memory.MemoryLoad);
         _cpuText.Text = Math.Round(_cpu).ToString(CultureInfo.InvariantCulture);
         _ramText.Text = Math.Round((double)_memory.MemoryLoad).ToString(CultureInfo.InvariantCulture);
-        _tile.ToolTip = $"CPU {Percent(_cpu)} · RAM {Gb(_memory.TotalPhys - _memory.AvailPhys)} / {Gb(_memory.TotalPhys)}";
+        _tile.ToolTip = $"CPU {UiText.Percent(_cpu)} · RAM {Gb(_memory.TotalPhys - _memory.AvailPhys)} / {Gb(_memory.TotalPhys)}";
     }
 
     private static void SetBar(QiDock.DesktopWidgets.RingGauge ring, double percent)
@@ -138,10 +138,10 @@ public sealed class SystemWidget : DockWidget
         header.Children.Add(Ui.Text(UiText.Get("SysTitle"), 13, FontWeights.SemiBold));
         root.Children.Add(header);
 
-        root.Children.Add(Card(UiText.Get("SysCpu"), Percent(_cpu), _cpu,
+        root.Children.Add(Card(UiText.Get("SysCpu"), UiText.Percent(_cpu), _cpu,
             string.Format(CultureInfo.CurrentCulture, UiText.Get("SysCores"), Environment.ProcessorCount)));
         var used = _memory.TotalPhys - _memory.AvailPhys;
-        root.Children.Add(Card(UiText.Get("SysRam"), Percent(_memory.MemoryLoad), _memory.MemoryLoad,
+        root.Children.Add(Card(UiText.Get("SysRam"), UiText.Percent(_memory.MemoryLoad), _memory.MemoryLoad,
             string.Format(CultureInfo.CurrentCulture, UiText.Get("SysRamDetail"), Gb(used), Gb(_memory.TotalPhys))));
 
         var uptime = TimeSpan.FromMilliseconds(Environment.TickCount64);
@@ -180,7 +180,6 @@ public sealed class SystemWidget : DockWidget
         return card;
     }
 
-    private static string Percent(double value) => "%" + Math.Round(value).ToString(CultureInfo.InvariantCulture);
 
     private static string Gb(ulong bytes) => (bytes / 1073741824d).ToString("0.0", CultureInfo.CurrentCulture) + " GB";
 

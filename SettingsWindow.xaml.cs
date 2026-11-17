@@ -157,7 +157,7 @@ public partial class SettingsWindow : Window
         MagnifyToggle.IsEnabled = AnimationsToggle.IsChecked == true;
         MagnifyScalePanel.IsEnabled = MagnifyToggle.IsChecked == true && MagnifyToggle.IsEnabled;
         MagnifyScalePanel.Opacity = MagnifyScalePanel.IsEnabled ? 1 : 0.45;
-        MagnifyValue.Text = UiText.Format("OpacityPercent", (int)Math.Round(MagnifySlider.Value));
+        MagnifyValue.Text = UiText.Percent(MagnifySlider.Value);
         // A gentle note, not a dialog: what the magnification costs, and that it stutters while low-memory mode is on.
         var magnifyOn = MagnifyToggle.IsChecked == true && MagnifyToggle.IsEnabled;
         MagnifyNote.Visibility = magnifyOn ? Visibility.Visible : Visibility.Collapsed;
@@ -453,7 +453,7 @@ public partial class SettingsWindow : Window
 
     private void UpdateApplyState() => ApplyButton.IsEnabled = HasEdits() || _preferences.LoadError is not null;
 
-    private void UpdateOpacityLabel() => OpacityValue.Text = UiText.Format("OpacityPercent", (int)Math.Round(OpacitySlider.Value));
+    private void UpdateOpacityLabel() => OpacityValue.Text = UiText.Percent(OpacitySlider.Value);
 
     private void OpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {

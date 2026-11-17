@@ -351,7 +351,7 @@ public sealed partial class MediaWidget
         _settingVolume = true;
         _volume.Value = Math.Round(level * 100);
         _settingVolume = false;
-        _volumeText!.Text = "%" + (int)_volume.Value;
+        _volumeText!.Text = UiText.Percent((int)_volume.Value);
         _volumeIcon!.Data = (Geometry)Application.Current.FindResource(muted || level <= 0 ? "IconVolumeMute" : "IconVolume");
     }
 

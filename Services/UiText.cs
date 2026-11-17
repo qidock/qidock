@@ -196,6 +196,7 @@ public sealed class UiText : INotifyPropertyChanged
             ["BatteryNone"] = ("Pil yok (fişe bağlı)", "No battery (plugged in)"),
             ["BatteryCharging"] = ("Şarj oluyor", "Charging"),
             ["BatteryLeft"] = ("{0} sa {1} dk kaldı", "{0} h {1} min left"),
+            ["HoursMinutes"] = ("{0} sa {1} dk", "{0} h {1} min"),
             ["BatteryTitle"] = ("Pil", "Battery"),
             ["PreviewWindowTitle"] = ("Pencere önizlemesi", "Window preview"),
             ["PreviewHiddenHint"] = ("Gizli: fareyi kenara götürünce çıkar", "Hidden: comes up at the screen edge"),
@@ -545,7 +546,7 @@ public sealed class UiText : INotifyPropertyChanged
             ["Theme"] = ("Açık / koyu", "Light / dark"),
             ["SurfaceOpacity"] = ("Yüzey opaklığı", "Surface opacity"),
             ["SurfaceOpacityHelp"] = ("Ayarlar, dock ve menülerin arka plan opaklığı.", "Background opacity for settings, the dock, and menus."),
-            ["OpacityPercent"] = ("%{0}", "{0}%"),
+            ["Percent"] = ("%{0}", "{0}%"),
             ["Minimize"] = ("Küçült", "Minimize"),
             ["Maximize"] = ("Büyüt", "Maximize"),
             ["Restore"] = ("Önceki boyut", "Restore"),
@@ -684,6 +685,8 @@ public sealed class UiText : INotifyPropertyChanged
         }
     }
     public static string Get(string key) => Current[key];
+    // Turkish writes the sign first (%94), English after (94%); every percent label goes through here.
+    public static string Percent(double value) => Format("Percent", Math.Round(value).ToString("0", System.Globalization.CultureInfo.InvariantCulture));
     public static string Format(string key, params object[] values) => string.Format(
         System.Globalization.CultureInfo.GetCultureInfo(Current._language == AppLanguage.English ? "en-US" : "tr-TR"), Get(key), values);
 

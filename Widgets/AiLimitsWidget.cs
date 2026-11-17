@@ -124,7 +124,6 @@ public sealed class AiLimitsWidget : DockWidget
 
     private static CultureInfo Culture => CultureInfo.GetCultureInfo(UiText.Get("CultureName"));
 
-    private static string Percent(double value) => UiText.Format("OpacityPercent", Math.Round(value).ToString("0", CultureInfo.InvariantCulture));
 
     /// <summary>"2sa 14dk" for today's resets, "19 Çar" for later ones.</summary>
     private static string ShortReset(DateTime at)
@@ -381,7 +380,7 @@ public sealed class AiLimitsWidget : DockWidget
     {
         var block = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
         var top = new DockPanel();
-        var percent = Ui.Text(Percent(window.UsedPercent), 12, FontWeights.SemiBold);
+        var percent = Ui.Text(UiText.Percent(window.UsedPercent), 12, FontWeights.SemiBold);
         percent.Width = 38;
         percent.TextAlignment = TextAlignment.Right;
         DockPanel.SetDock(percent, Dock.Right);
@@ -499,7 +498,7 @@ public sealed class AiLimitsWidget : DockWidget
         face.Children.Add(logo);
         var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         row.Children.Add(face);
-        var text = Ui.Text(used is { } v ? Math.Round(v).ToString("0", CultureInfo.InvariantCulture) + "%" : "—", 11.5, FontWeights.SemiBold,
+        var text = Ui.Text(used is { } v ? UiText.Percent(v) : "—", 11.5, FontWeights.SemiBold,
             brush: used is { } w ? Ui.UsageBrush(w) : null);
         text.Margin = new Thickness(5, 0, 0, 0);
         text.VerticalAlignment = VerticalAlignment.Center;

@@ -116,7 +116,7 @@ internal static class DeskUi
         return stack;
     }
 
-    public static string Percent(double value) => "%" + Math.Round(value).ToString(CultureInfo.InvariantCulture);
+    public static string Percent(double value) => Services.UiText.Percent(value);
 }
 
 /// <summary>Clickable rounded area (round play buttons, toggles, list rows). Never takes focus.</summary>

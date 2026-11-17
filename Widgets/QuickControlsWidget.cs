@@ -245,7 +245,7 @@ public sealed class QuickControlsWidget : DockWidget
         if (_deviceName.Text != name) _deviceName.Text = name;
         _deviceName.ToolTip = name;
         var percent = (int)Math.Round(state.Volume * 100);
-        _volumeText.Text = state.Muted ? UiText.Get("QcMuted") : UiText.Format("OpacityPercent", percent.ToString(CultureInfo.InvariantCulture));
+        _volumeText.Text = state.Muted ? UiText.Get("QcMuted") : UiText.Percent(percent);
         _muteButton.Content = Ui.Icon(state.Muted || percent == 0 ? "IconVolumeMute" : "IconVolume", 13);
         UpdateSliderFill();
     }
@@ -263,7 +263,7 @@ public sealed class QuickControlsWidget : DockWidget
         var level = (float)Math.Clamp(point.X / _slider.ActualWidth, 0, 1);
         _audio.SetVolume(level);
         _audioState = (_audioState ?? new AudioEndpoint.State(level, false, "")) with { Volume = level, Muted = false };
-        _volumeText.Text = UiText.Format("OpacityPercent", ((int)Math.Round(level * 100)).ToString(CultureInfo.InvariantCulture));
+        _volumeText.Text = UiText.Percent(level * 100);
         UpdateSliderFill();
     }
 

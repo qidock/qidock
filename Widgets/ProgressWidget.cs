@@ -76,7 +76,7 @@ public sealed class ProgressWidget : DockWidget
                 culture.DateTimeFormat.GetMonthName(now.Month), 3)
         };
         _name.Text = state.Name;
-        _percent.Text = UiText.Format("OpacityPercent", (int)Math.Floor(state.Fraction * 100));
+        _percent.Text = UiText.Percent(Math.Floor(state.Fraction * 100));
         _tile.ToolTip = UiText.Format("ProgressHint", state.Name, Math.Floor(state.Fraction * 100));
 
         var signature = $"{_kind}|{state.Total}|{state.Done}";
