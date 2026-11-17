@@ -2,9 +2,9 @@
 
 QiDock turns the Windows 10 and 11 taskbar into a floating glass dock with a widget bar of its own: music, weather, calendar, AI limits, currency, timers, notes, reminders and more, grouped into profiles you switch with one click. Cards and panels grow straight out of the dock, notifications arrive as banners at the top, and the whole thing is built to stay light: a low-memory mode keeps it near 140 MB, and widgets sleep while they are off screen.
 
-![QiDock: the dock with real app icons, widget tiles and desktop widgets on Windows](docs/images/hero.png)
+[![QiDock: the dock with real app icons, widget tiles and desktop widgets on Windows](docs/images/hero.png)](https://youtu.be/9ljiXBjgl88)
 
-⬇ **[Download QiDock.exe](https://github.com/qidock/qidock/releases/latest)** (portable, no install) · ▶ **[Watch the 46-second tour](docs/qidock-promo.mp4)**
+⬇ **[Download QiDock.exe](https://github.com/qidock/qidock/releases/latest)** (portable, no install) · ▶ **[Watch the 46-second tour on YouTube](https://youtu.be/9ljiXBjgl88)**
 
 | | |
 |:---:|:---:|
