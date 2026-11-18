@@ -21,6 +21,9 @@ public sealed class NativeWindowTracker : IDisposable
     private const int ChildIdSelf = 0;
     private const int WindowOwner = 4;
     private const int GwlExStyle = -20;
+    private const int GwlStyle = -16;
+    private const long WsPopup = 0x80000000;
+    private const long WsMinimizeBox = 0x00020000;
     private const long WsExAppWindow = 0x00040000;
     private const long WsExToolWindow = 0x00000080;
     private const uint GaRootOwner = 3;
@@ -218,14 +221,23 @@ public sealed class NativeWindowTracker : IDisposable
 
     private bool CollectWindow(nint windowHandle, nint state)
     {
-        if (windowHandle == _excludedWindow || !IsWindowVisible(windowHandle)
-            || GetWindow(windowHandle, WindowOwner) != 0)
+        if (windowHandle == _excludedWindow || !IsWindowVisible(windowHandle))
         {
             return true;
         }
 
         var extendedStyle = GetWindowLongPtr(windowHandle, GwlExStyle).ToInt64();
         if ((extendedStyle & WsExToolWindow) != 0 && (extendedStyle & WsExAppWindow) == 0)
+        {
+            return true;
+        }
+
+        // Owned windows are dialogs of another window, except when they ask for a taskbar button or their
+        // owner is hidden: many business programs (WinForms, Delphi) keep a hidden main window that owns
+        // every screen they show, and those screens are the program as far as the user can see.
+        var owner = GetWindow(windowHandle, WindowOwner);
+        if (owner != 0 && (extendedStyle & WsExAppWindow) == 0
+            && (IsWindowVisible(owner) || (GetWindowLongPtr(windowHandle, GwlStyle).ToInt64() & WsPopup) != 0))
         {
             return true;
         }
@@ -331,9 +343,17 @@ public sealed class NativeWindowTracker : IDisposable
         }
 
         var foregroundRoot = GetAncestor(foregroundWindow, GaRootOwner);
-        if (foregroundRoot == 0)
+        if (foregroundRoot == 0 || !IsWindowVisible(foregroundRoot))
         {
-            foregroundRoot = foregroundWindow;
+            // A program whose hidden main window owns its screens: the screen itself, not the hidden window.
+            foregroundRoot = GetAncestor(foregroundWindow, GaRoot) is var root and not 0 ? root : foregroundWindow;
+        }
+
+        // A window without a minimize button is not minimized from the dock either: programs made that way
+        // (tills, kiosks) often close the screen when it is minimized.
+        if ((GetWindowLongPtr(foregroundRoot, GwlStyle).ToInt64() & WsMinimizeBox) == 0)
+        {
+            return 0;
         }
 
         return IsWindow(foregroundRoot) && !IsIconic(foregroundRoot)

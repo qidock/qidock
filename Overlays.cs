@@ -50,7 +50,7 @@ public abstract class OverlayWindow : Window
         {
             if (e.Key != Key.Escape) return;
             e.Handled = true;
-            Dismiss();
+            if (!OnEscape()) Dismiss();
         };
         Deactivated += (_, _) => Dismiss();
     }
@@ -72,6 +72,15 @@ public abstract class OverlayWindow : Window
 
     /// <summary>Whether the desktop behind is blurred (AppGrid), not just dimmed.</summary>
     protected virtual bool Frosted => false;
+
+    /// <summary>The colour laid over the blurred desktop (alpha = how strongly).</summary>
+    protected virtual Color FrostTint => Color.FromArgb(0x73, 0x10, 0x11, 0x16);
+
+    /// <summary>Whether the blur really is on (false where Windows can't; then draw a dark background).</summary>
+    protected bool IsFrosted { get; private set; }
+
+    /// <summary>Esc closes an inner layer first (an open folder); true when it did, so the overlay stays.</summary>
+    protected virtual bool OnEscape() => false;
 
     /// <summary>Clicks on these elements count as clicks on the empty background.</summary>
     protected virtual bool IsBackground(object source) => false;
@@ -107,7 +116,6 @@ public abstract class OverlayWindow : Window
         _dismissing = true;
         if (ReferenceEquals(_open, this)) _open = null;
         OnDismissing();
-        if (Frosted) GpuTransparency.Blur(this, false);
         var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(150)) { EasingFunction = Motion.In };
         fade.Completed += (_, _) =>
         {
@@ -122,7 +130,8 @@ public abstract class OverlayWindow : Window
         base.OnSourceInitialized(e);
         if (PresentationSource.FromVisual(this) is not HwndSource source) return;
         GpuTransparency.Apply(this);
-        if (Frosted) GpuTransparency.Blur(this, true);
+        // The blurred desktop stays until the window closes, under the fading content.
+        if (Frosted) IsFrosted = GpuTransparency.Frost(this, FrostTint, rounded: false);
         // Keep the overlay out of Alt+Tab.
         var style = GetWindowLongPtr(source.Handle, -20).ToInt64();
         SetWindowLongPtr(source.Handle, -20, new nint((style | 0x80) & ~0x40000));
@@ -179,162 +188,6 @@ internal static class AppList
         _loading = AppCatalog.LoadAsync();
         _loading.ContinueWith(t => _apps = t.Result, CancellationToken.None, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.FromCurrentSynchronizationContext());
         return _loading;
-    }
-}
-
-/// <summary>Every installed app as a grid of large icons over the dimmed screen; type to filter.</summary>
-public sealed class AppGridWindow : OverlayWindow
-{
-    private const double Cell = 132;
-    // Over the blurred desktop a lighter tint is enough; without blur the screen is darkened more.
-    private static readonly Brush Dim = Ui.Solid(GpuTransparency.CanBlur ? "#8C0E0F13" : "#F00E0F13");
-    // Icons stay cached between openings (about 64 KB each) so the grid fills at once next time.
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, ImageSource?> Icons = new(StringComparer.OrdinalIgnoreCase);
-    private readonly WrapPanel _grid = new() { HorizontalAlignment = HorizontalAlignment.Center };
-    private readonly ScrollViewer _scroll;
-    private readonly TextBox _box;
-    private List<InstalledApp> _apps = [];
-    private List<InstalledApp> _shown = [];
-    private volatile int _iconBuild;
-
-    public static void Toggle()
-    {
-        if (CloseIfOpen<AppGridWindow>()) return;
-        new AppGridWindow().Present();
-    }
-
-    private AppGridWindow() : base(Dim)
-    {
-        var (field, box) = SearchField(UiText.Get("AppGridSearch"), 15, Ui.White, Ui.Solid("#A6FFFFFF"), Ui.Solid("#33FFFFFF"));
-        _box = box;
-        field.Width = 300;
-        field.HorizontalAlignment = HorizontalAlignment.Center;
-        field.Margin = new Thickness(0, 56, 0, 30);
-        box.TextChanged += (_, _) => Fill();
-        box.PreviewKeyDown += (_, e) =>
-        {
-            if (e.Key != Key.Enter || _shown.Count == 0) return;
-            e.Handled = true;
-            Launch(_shown[0]);
-        };
-        var columns = Math.Max(4, Math.Min(8, (int)((Width - 160) / Cell)));
-        _grid.MaxWidth = columns * Cell;
-        _scroll = new ScrollViewer { Content = _grid, VerticalScrollBarVisibility = ScrollBarVisibility.Hidden, Focusable = false, Padding = new Thickness(0, 0, 0, 60) };
-        var layout = new DockPanel();
-        DockPanel.SetDock(field, Dock.Top);
-        layout.Children.Add(field);
-        layout.Children.Add(_scroll);
-        Root.Children.Add(layout);
-        _apps = AppList.Cached ?? [];
-        Fill();
-        AppList.RefreshAsync().ContinueWith(t =>
-        {
-            // Rebuilding a hundred tiles takes a moment, so only when the list really changed.
-            if (!IsVisible || t.Result.SequenceEqual(_apps)) return;
-            _apps = t.Result;
-            Fill();
-        }, CancellationToken.None, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.FromCurrentSynchronizationContext());
-    }
-
-    protected override bool IsBackground(object source) => ReferenceEquals(source, _grid) || source is ScrollViewer || source is DockPanel { Parent: Grid };
-
-    protected override bool Frosted => true;
-
-    /// <summary>The grid settles from slightly large to its size.</summary>
-    protected override void OnShown() => _box.Focus();
-
-    protected override void OnPresented()
-    {
-        var scale = new ScaleTransform(1.05, 1.05, Width / 2, Height / 2);
-        _scroll.RenderTransform = scale;
-        scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(320)) { EasingFunction = Motion.Out });
-        scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(320)) { EasingFunction = Motion.Out });
-    }
-
-    private void Fill()
-    {
-        var query = _box.Text.Trim();
-        _shown = query.Length == 0 ? _apps : _apps.Where(a => Matches(a.Name, query)).ToList();
-        _grid.Children.Clear();
-        if (_apps.Count == 0)
-        {
-            _grid.Children.Add(new TextBlock { Text = UiText.Get("AppGridLoading"), Foreground = Ui.WhiteSoft, FontSize = 14, Margin = new Thickness(0, 40, 0, 0) });
-            return;
-        }
-        var images = new List<(Image Image, string Id)>();
-        foreach (var app in _shown)
-        {
-            var image = new Image { Width = 72, Height = 72, Stretch = Stretch.Uniform };
-            if (Icons.TryGetValue(app.Id, out var known)) image.Source = known;
-            else images.Add((image, app.Id));
-            _grid.Children.Add(Tile(app, image));
-        }
-        LoadIcons(images);
-    }
-
-    /// <summary>Loads missing icons on a background thread and drops each into the grid as it arrives.</summary>
-    private void LoadIcons(List<(Image Image, string Id)> pending)
-    {
-        var build = ++_iconBuild;
-        if (pending.Count == 0) return;
-        var thread = new Thread(() =>
-        {
-            // Icons are handed over in small batches so the grid redraws a few times, not once per icon.
-            var batch = new List<(Image Image, ImageSource? Source)>();
-            void Flush()
-            {
-                if (batch.Count == 0) return;
-                var ready = batch.ToArray();
-                batch.Clear();
-                Dispatcher.BeginInvoke(() =>
-                {
-                    foreach (var (image, source) in ready) image.Source = source;
-                }, DispatcherPriority.Background);
-            }
-            foreach (var (image, id) in pending)
-            {
-                if (build != _iconBuild) return;
-                batch.Add((image, Icons.GetOrAdd(id, key => NotificationApps.LoadIcon(key, 128))));
-                if (batch.Count >= 16) Flush();
-            }
-            Flush();
-        }) { IsBackground = true, Name = "AppGrid icons" };
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-    }
-
-    private FrameworkElement Tile(InstalledApp app, Image image)
-    {
-        var name = new TextBlock
-        {
-            Text = app.Name,
-            Foreground = Ui.White,
-            FontSize = 12,
-            TextAlignment = TextAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            Margin = new Thickness(0, 8, 0, 0)
-        };
-        // No per-icon shadows: a hundred of them made opening and scrolling stutter.
-        var column = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
-        column.Children.Add(image);
-        column.Children.Add(name);
-        var hover = Ui.Solid("#1FFFFFFF");
-        var tile = new Border { Width = Cell - 12, Height = Cell - 8, Margin = new Thickness(6, 4, 6, 4), Padding = new Thickness(8, 10, 8, 6), CornerRadius = new CornerRadius(16), Background = Brushes.Transparent, Child = column, ToolTip = app.Name, Cursor = Cursors.Hand };
-        tile.MouseEnter += (_, _) => tile.Background = hover;
-        tile.MouseLeave += (_, _) => tile.Background = Brushes.Transparent;
-        tile.MouseLeftButtonUp += (_, e) =>
-        {
-            e.Handled = true;
-            Launch(app);
-        };
-        return tile;
-    }
-
-    private void Launch(InstalledApp app)
-    {
-        Dismiss();
-        app.Launch();
     }
 }
 

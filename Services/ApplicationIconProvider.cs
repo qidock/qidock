@@ -22,7 +22,7 @@ public static class ApplicationIconProvider
                 return executableIcon;
             }
 
-            return null;
+            return GetFolderLogo(path);
         }
 
         if (File.Exists(path))
@@ -48,6 +48,44 @@ public static class ApplicationIconProvider
         finally
         {
             DestroyIcon(fileInfo.Icon);
+        }
+    }
+
+    /// <summary>
+    /// For a program file without an icon of its own (some business programs ship their logo as a
+    /// separate .ico next to it, often in a pictures folder): the sharpest square .ico in the program's
+    /// folder or the folders right inside it, or null when there is none.
+    /// </summary>
+    private static BitmapSource? GetFolderLogo(string executablePath)
+    {
+        try
+        {
+            if (Path.GetDirectoryName(executablePath) is not { } folder || !Directory.Exists(folder)) return null;
+            // Windows' own folders hold hundreds of unrelated icons.
+            if (folder.StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.Windows), StringComparison.OrdinalIgnoreCase)) return null;
+            var files = Directory.EnumerateFiles(folder, "*.ico")
+                .Concat(Directory.EnumerateDirectories(folder).SelectMany(sub => Directory.EnumerateFiles(sub, "*.ico")))
+                .Take(40);
+            BitmapSource? best = null;
+            foreach (var file in files)
+            {
+                try
+                {
+                    using var stream = File.OpenRead(file);
+                    var decoder = new IconBitmapDecoder(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+                    // Square pictures only: odd sizes are banners or broken files, not app icons.
+                    var frame = decoder.Frames.Where(f => f.PixelWidth == f.PixelHeight).MaxBy(f => f.PixelWidth);
+                    if (frame is null || frame.PixelWidth < 32 || frame.PixelWidth <= (best?.PixelWidth ?? 0)) continue;
+                    frame.Freeze();
+                    best = frame;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or FileFormatException or ArgumentException or OverflowException) { }
+            }
+            return best;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
         }
     }
 

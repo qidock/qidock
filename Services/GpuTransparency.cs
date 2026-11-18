@@ -29,19 +29,6 @@ public static class GpuTransparency
         window.Background = Brushes.Transparent;
     }
 
-    /// <summary>Whether Windows can blur what lies behind a window (Windows 11 22H2 and later).</summary>
-    public static bool CanBlur => Supported && Environment.OSVersion.Version.Build >= 22621;
-
-    /// <summary>Turns the frosted blur behind the whole window on or off.</summary>
-    public static void Blur(Window window, bool on)
-    {
-        if (!CanBlur || PresentationSource.FromVisual(window) is not HwndSource source) return;
-        var value = on ? 3 /* DWMSBT_TRANSIENTWINDOW */ : 1 /* DWMSBT_NONE */;
-        DwmSetWindowAttribute(source.Handle, 38, ref value, sizeof(int));
-        value = 1; // dark material
-        DwmSetWindowAttribute(source.Handle, 20, ref value, sizeof(int));
-    }
-
     public static void Apply(Window window)
     {
         if (window.AllowsTransparency || !Supported || PresentationSource.FromVisual(window) is not HwndSource source) return;
@@ -62,8 +49,9 @@ public static class GpuTransparency
     /// thin edge and soft shadow Windows gives its own flyouts. Unlike the system backdrop this
     /// stays frosted while the window is not the active one (the panels never take focus).
     /// Returns false where Windows can't (then the caller draws an opaque background).
+    /// A full-screen window passes <paramref name="rounded"/> false: square corners, no edge.
     /// </summary>
-    public static bool Frost(Window window, Color tint)
+    public static bool Frost(Window window, Color tint, bool rounded = true)
     {
         if (window.AllowsTransparency || !Supported || PresentationSource.FromVisual(window) is not HwndSource source) return false;
         var policy = new AccentPolicy
@@ -81,7 +69,7 @@ public static class GpuTransparency
         }
         catch (EntryPointNotFoundException) { return false; }
         finally { Marshal.FreeHGlobal(memory); }
-        if (Environment.OSVersion.Version.Build >= 22000)
+        if (rounded && Environment.OSVersion.Version.Build >= 22000)
         {
             var value = 2; // DWMWCP_ROUND
             DwmSetWindowAttribute(source.Handle, 33, ref value, sizeof(int));

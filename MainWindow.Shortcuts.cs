@@ -55,15 +55,19 @@ public partial class MainWindow
         var here = files ? _desktopShown : _cleanShown;
         if (here && _windowsAside && ComputeDesktopClean())
         {
-            ToggleDesktop();
+            if (_desktopToggled) ToggleDesktop();
+            BringBackForcedAside(activate: !_desktopToggled);
             LeaveDesktop();
             return;
         }
+        _desktopToggled = false;
         if (!ComputeDesktopClean())
         {
             ToggleDesktop();
             _windowsAside = true;
+            _desktopToggled = true;
         }
+        SweepStubbornWindows();
         _desktopShownAt = DateTime.UtcNow;
         _cleanShown = !files;
         SetDesktopFilesMode(files);
@@ -73,10 +77,116 @@ public partial class MainWindow
     /// <summary>Back from either desktop: the icons return to what the settings ask for.</summary>
     private void LeaveDesktop()
     {
+        // Another window came forward: the stepped-aside ones come back behind it, as they were.
+        BringBackForcedAside(activate: false);
         _windowsAside = false;
         _cleanShown = false;
         SetDesktopFilesMode(false);
         if (!_preferences.Current.HideDesktopIcons) ApplyDesktopIcons(false);
+    }
+
+    // Whether the desktop button used Win+D (so pressing it again uses Win+D to bring the windows back).
+    private bool _desktopToggled;
+    // Windows Win+D leaves standing, which QiDock moved off the screen itself, top one first, with where they were.
+    private readonly List<(nint Window, DesktopNative.Rect Bounds)> _forcedAside = [];
+
+    /// <summary>Whether QiDock moved this window off the screen to show the desktop.</summary>
+    private bool IsForcedAside(nint window) => _forcedAside.Any(f => f.Window == window);
+
+    /// <summary>
+    /// Win+D leaves windows without a minimize button where they are, so a program that fills the
+    /// whole screen that way (a till or a kiosk program, often several such windows on top of each other)
+    /// kept the desktop out of reach. Once Win+D has done its part, those still covering the screen are
+    /// moved off the screen here. They are not minimized: such programs often close a screen that gets
+    /// minimized and go back to their main menu, while a move leaves them exactly as they were.
+    /// </summary>
+    private void SweepStubbornWindows()
+    {
+        var timer = new DispatcherTimer(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(350) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            var primary = DesktopNative.MonitorFromPoint(default, 1 /* MONITOR_DEFAULTTOPRIMARY */);
+            var info = new DesktopNative.MonitorInfo { Size = (uint)Marshal.SizeOf<DesktopNative.MonitorInfo>() };
+            if (!DesktopNative.GetMonitorInfo(primary, ref info)) return;
+            var screen = info.Bounds;
+            var screenArea = (double)(screen.Right - screen.Left) * (screen.Bottom - screen.Top);
+            var own = (uint)Environment.ProcessId;
+            var found = new List<(nint, DesktopNative.Rect)>();
+            DesktopNative.EnumWindows((window, _) =>
+            {
+                if (!DesktopNative.IsWindowVisible(window) || DesktopNative.IsIconic(window)) return true;
+                var style = DesktopNative.GetWindowLongPtr(window, -16).ToInt64();
+                var exStyle = DesktopNative.GetWindowLongPtr(window, -20).ToInt64();
+                if ((style & 0x00020000 /* WS_MINIMIZEBOX */) != 0 || (exStyle & 0x00000080 /* WS_EX_TOOLWINDOW */) != 0) return true;
+                if (DesktopNative.GetAncestor(window, 2 /* GA_ROOT */) != window) return true;
+                DesktopNative.GetWindowThreadProcessId(window, out var process);
+                if (process == own) return true;
+                if (DesktopNative.DwmGetWindowAttribute(window, 14 /* DWMWA_CLOAKED */, out var cloaked, sizeof(int)) == 0 && cloaked != 0) return true;
+                var name = new StringBuilder(64);
+                DesktopNative.GetClassName(window, name, name.Capacity);
+                if (name.ToString() is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "Windows.UI.Core.CoreWindow") return true;
+                if (DesktopNative.MonitorFromWindow(window, 2 /* MONITOR_DEFAULTTONEAREST */) != primary || !DesktopNative.GetWindowRect(window, out var rect)) return true;
+                var width = Math.Min(rect.Right, screen.Right) - Math.Max(rect.Left, screen.Left);
+                var height = Math.Min(rect.Bottom, screen.Bottom) - Math.Max(rect.Top, screen.Top);
+                // Only windows that hide most of the desktop; small dialogs and floating tools stay.
+                if (width > 0 && height > 0 && width * (double)height >= screenArea * 0.5) found.Add((window, rect));
+                return true;
+            }, 0);
+            if (found.Count == 0) return;
+            var foreground = DesktopNative.GetForegroundWindow();
+            foreach (var (window, _) in found) DesktopNative.SetWindowPos(window, 0, OffScreen, OffScreen, 0, 0, MoveOnly);
+            _forcedAside.AddRange(found);
+            _windowsAside = true;
+            // The keyboard goes to the desktop, as with Win+D, not to a window that is out of sight.
+            if (found.Any(f => f.Item1 == foreground) && DesktopNative.FindWindow("Progman", null) is var desktop and not 0)
+                DesktopNative.SetForegroundWindow(desktop);
+        };
+        timer.Start();
+    }
+
+    private const int OffScreen = -32000;
+    private const uint MoveOnly = 0x0001 /* NOSIZE */ | 0x0004 /* NOZORDER */ | 0x0010 /* NOACTIVATE */ | 0x4000 /* ASYNCWINDOWPOS */;
+
+    /// <summary>
+    /// Puts the windows moved by <see cref="SweepStubbornWindows"/> back where they were, in the same
+    /// order on top of each other; with <paramref name="activate"/> the top one takes the keyboard again.
+    /// </summary>
+    private void BringBackForcedAside(bool activate)
+    {
+        if (_forcedAside.Count == 0) return;
+        foreach (var (window, bounds) in _forcedAside)
+            if (DesktopNative.IsWindow(window)) DesktopNative.SetWindowPos(window, 0, bounds.Left, bounds.Top, 0, 0, MoveOnly);
+        var top = _forcedAside[0].Window;
+        _forcedAside.Clear();
+        if (activate && DesktopNative.IsWindow(top)) NativeWindowTracker.Activate(top);
+    }
+
+    private static class DesktopNative
+    {
+        public delegate bool EnumWindowsProc(nint window, nint parameter);
+
+        [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
+        [StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
+        [StructLayout(LayoutKind.Sequential)] public struct MonitorInfo { public uint Size; public Rect Bounds; public Rect Work; public uint Flags; }
+
+        [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool EnumWindows(EnumWindowsProc callback, nint parameter);
+        [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool IsWindow(nint window);
+        [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool IsWindowVisible(nint window);
+        [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool IsIconic(nint window);
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] public static extern nint GetWindowLongPtr(nint window, int index);
+        [DllImport("user32.dll")] public static extern nint GetAncestor(nint window, uint flags);
+        [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(nint window, out uint process);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(nint window, StringBuilder name, int capacity);
+        [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool GetWindowRect(nint window, out Rect rect);
+        [DllImport("user32.dll")] public static extern nint MonitorFromWindow(nint window, uint flags);
+        [DllImport("user32.dll")] public static extern nint MonitorFromPoint(Point point, uint flags);
+        [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool GetMonitorInfo(nint monitor, ref MonitorInfo info);
+        [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool SetWindowPos(nint window, nint after, int x, int y, int width, int height, uint flags);
+        [DllImport("user32.dll")] public static extern nint GetForegroundWindow();
+        [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool SetForegroundWindow(nint window);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern nint FindWindow(string? className, string? title);
+        [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(nint window, int attribute, out int value, int size);
     }
 
     private void SetDesktopFilesMode(bool on)
@@ -206,12 +316,14 @@ public partial class MainWindow
         if (dialog.ShowDialog() == true) AddShortcuts(dialog.FolderNames);
     }
 
-    private void AddShortcuts(IEnumerable<string> paths)
+    /// <param name="displayName">The name to show (an app pinned from the app screen keeps its Start menu name).</param>
+    private void AddShortcuts(IEnumerable<string> paths, string? displayName = null)
     {
         var added = 0;
         foreach (var path in paths)
         {
-            var (target, arguments, name) = Describe(path);
+            var (target, arguments, described) = Describe(path);
+            var name = displayName ?? described;
             if (target is null) continue;
             if (_pinnedApps.Any(a => string.Equals(a.ExecutablePath, target, StringComparison.OrdinalIgnoreCase))) continue;
             var app = new DockApp(name, target) { LaunchArguments = arguments, IsCustomShortcut = true, Icon = ShortcutIcon(target) };

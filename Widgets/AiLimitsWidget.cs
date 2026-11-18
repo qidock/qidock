@@ -52,6 +52,7 @@ public sealed class AiLimitsWidget : DockWidget
         _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMinutes(1) };
         _timer.Tick += (_, _) => _ = RefreshAsync(false);
         UiText.Current.PropertyChanged += (_, _) => Render();
+        _usage = _service.Cached;
         Render();
     }
 

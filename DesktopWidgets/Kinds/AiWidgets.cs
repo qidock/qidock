@@ -61,7 +61,11 @@ internal sealed class AiUsageHub
     public IReadOnlyList<ProviderUsage> Usage { get; private set; } = [];
     public bool Loaded { get; private set; }
 
-    private AiUsageHub() => _timer.Tick += (_, _) => _ = RefreshAsync();
+    private AiUsageHub()
+    {
+        Usage = _service.Cached;
+        _timer.Tick += (_, _) => _ = RefreshAsync();
+    }
 
     public ProviderUsage? For(string provider) => Usage.FirstOrDefault(u => u.Provider == provider);
 
@@ -109,6 +113,7 @@ internal sealed class AiAssistantWidget(AiAssistant assistant) : DeskWidget
     private readonly List<(TextBlock Label, TextBlock Value, Border Fill, Grid Bar, TextBlock Reset)> _rows = [];
     private TextBlock? _headline, _status;
     private RingGauge? _ring;
+    private bool _statusOnlyWhenEmpty;
 
     private bool HasUsage => assistant.UsageProvider is not null;
 
@@ -118,6 +123,7 @@ internal sealed class AiAssistantWidget(AiAssistant assistant) : DeskWidget
         _headline = null;
         _status = null;
         _ring = null;
+        _statusOnlyWhenEmpty = false;
         return HasUsage ? BuildUsage() : BuildLauncher();
     }
 
@@ -163,9 +169,12 @@ internal sealed class AiAssistantWidget(AiAssistant assistant) : DeskWidget
                 icon.HorizontalAlignment = HorizontalAlignment.Center;
                 host.Children.Add(icon);
                 _headline = Digits("", 20, FontWeights.Bold);
+                // No room for a status line: the reason shows only while there is no number to show.
+                _status.FontSize = 10.5;
+                _statusOnlyWhenEmpty = true;
                 var grid = Grid(columns: "Auto,*");
                 grid.Children.Add(host);
-                grid.Children.Add(At(Margin(Column(_headline, Name(12)), 12), 0, 1));
+                grid.Children.Add(At(Margin(Column(_headline, Name(12), _status), 12), 0, 1));
                 return grid;
             }
             case DeskSize.Small:
@@ -253,7 +262,12 @@ internal sealed class AiAssistantWidget(AiAssistant assistant) : DeskWidget
             { Plan: { Length: > 0 } plan } => plan,
             _ => Desk.L("Kullanım sınırları", "Usage limits")
         };
-        if (_status is not null) _status.Text = status;
+        if (_status is not null)
+        {
+            _status.Text = status;
+            _status.ToolTip = status;
+            _status.Visibility = _statusOnlyWhenEmpty && windows.Count > 0 && usage?.Error is null ? Visibility.Collapsed : Visibility.Visible;
+        }
         if (_headline is not null) _headline.Text = windows.Count > 0 ? Percent(windows[0].UsedPercent) : "—";
         if (_ring is not null) _ring.Value = windows.Count > 0 ? windows[0].UsedPercent : 0;
         for (var i = 0; i < _rows.Count; i++)

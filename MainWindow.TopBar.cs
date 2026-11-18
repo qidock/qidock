@@ -32,7 +32,6 @@ public partial class MainWindow
         ApplyDockBell();
         _topBar = new TopBarWindow { Tabs = _widgetBar.ProfileStrip };
         _widgetBar.ProfileMenuRequested += (_, target) => ShowProfileMenu(target.Index, target.Anchor);
-        _widgetBar.ProfilesRequested += (_, anchor) => ShowProfilesMenu(anchor);
         _topBar.SetLock(() => _widgetBar.IsAnyPopupOpen || _widgetBar.IsEditing || _openContextMenu?.IsOpen == true || EdgePanel.StandsOnDock || _holdDockUp);
         _topBar.LiveChanged += (_, live) => _widgetBar.SetLive(live || WidgetsInDock && DockOnScreen);
         _topBar.MenuRequested += (_, _) => ShowDockMenu(PlacementMode.MousePoint, null);
@@ -619,71 +618,6 @@ public partial class MainWindow
         });
     }
 
-    /// <summary>Preset profile names offered for a new profile or a rename.</summary>
-    private static readonly string[] ProfileNames = ["ProfileWork", "ProfileCode", "ProfileHome", "ProfileFocus", "ProfileGame", "ProfileSchool", "ProfileCreative", "ProfileTools", "ProfileDefault"];
-
-    /// <summary>The profile tile's menu: switch profile, make a new one, rename or remove the active one.</summary>
-    private void ShowProfilesMenu(FrameworkElement anchor)
-    {
-        var options = _preferences.Current.WidgetOptions;
-        var profiles = options.EffectiveProfiles;
-        var active = options.EffectiveActiveProfile;
-        var menu = new ContextMenu { PlacementTarget = anchor, Placement = Services.DockGeometry.Inward };
-        menu.Opened += DockContextMenu_Opened;
-        menu.Closed += DockContextMenu_Closed;
-        for (var i = 0; i < profiles.Count; i++)
-        {
-            var index = i;
-            var item = Item(profiles[i].Name, null, i == active);
-            if (i < 9) item.InputGestureText = "Ctrl+Alt+Shift+" + (i + 1);
-            item.Click += (_, _) =>
-            {
-                var current = _preferences.Current.WidgetOptions;
-                if (index != current.EffectiveActiveProfile) SaveWidgetOptions(current.SwitchProfile(index));
-                Widgets.Ui.ShowHud("IconLayout", current.EffectiveProfiles[index].Name);
-            };
-            menu.Items.Add(item);
-        }
-        menu.Items.Add(new Separator());
-        var create = Item(Services.UiText.Get("ProfileNewMenu"), "IconPlus");
-        var taken = profiles.Select(p => p.Name).ToHashSet(StringComparer.CurrentCultureIgnoreCase);
-        foreach (var key in ProfileNames)
-        {
-            var name = Services.UiText.Get(key);
-            if (taken.Contains(name)) continue;
-            var item = Item(name, null);
-            item.Click += (_, _) =>
-            {
-                SaveWidgetOptions(_preferences.Current.WidgetOptions.AddProfile(name));
-                Widgets.Ui.ShowHud("IconLayout", Services.UiText.Format("ProfileCreated", name));
-            };
-            create.Items.Add(item);
-        }
-        var numbered = Item(Services.UiText.Format("ProfileNew", profiles.Count + 1), null);
-        numbered.Click += (_, _) => SaveWidgetOptions(_preferences.Current.WidgetOptions.AddProfile(Services.UiText.Format("ProfileNew", profiles.Count + 1)));
-        create.Items.Add(numbered);
-        menu.Items.Add(create);
-        var rename = Item(Services.UiText.Get("ProfileRename"), "IconEdit");
-        foreach (var key in ProfileNames)
-        {
-            var name = Services.UiText.Get(key);
-            var item = Item(name, null, profiles[active].Name == name);
-            item.IsEnabled = !taken.Contains(name) || profiles[active].Name == name;
-            item.Click += (_, _) => SaveWidgetOptions(_preferences.Current.WidgetOptions.RenameProfile(active, name));
-            rename.Items.Add(item);
-        }
-        menu.Items.Add(rename);
-        var remove = Item(Services.UiText.Format("ProfileRemoveNamed", profiles[active].Name), "IconClose");
-        remove.IsEnabled = profiles.Count > 1;
-        remove.Click += (_, _) => SaveWidgetOptions(_preferences.Current.WidgetOptions.RemoveProfile(active));
-        menu.Items.Add(remove);
-        menu.Items.Add(new Separator());
-        var edit = Item(Services.UiText.Get(_widgetBar.IsEditing ? "MenuEditDone" : "ProfileEditWidgets"), "IconLayout");
-        edit.Click += (_, _) => _widgetBar.SetEditing(!_widgetBar.IsEditing);
-        menu.Items.Add(edit);
-        menu.IsOpen = true;
-    }
-
     private void ShowProfileMenu(int index, FrameworkElement anchor)
     {
         var options = _preferences.Current.WidgetOptions;
@@ -746,7 +680,8 @@ public partial class MainWindow
     {
         if (_windowTracker?.Snapshot is not { } windows) return false;
         var primary = TopNative.MonitorFromPoint(new TopNative.Point(), 1 /* MONITOR_DEFAULTTOPRIMARY */);
-        return !windows.Any(window => IsOpenOn(window.Handle, primary));
+        // Windows the desktop button moved off the screen count as put away.
+        return !windows.Any(window => !IsForcedAside(window.Handle) && IsOpenOn(window.Handle, primary));
     }
 
     private static bool IsOpenOn(nint window, nint monitor) =>

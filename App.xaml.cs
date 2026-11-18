@@ -11,6 +11,27 @@ namespace QiDock;
 public partial class App : Application
 {
     private Mutex? _instanceMutex;
+
+    /// <summary>
+    /// The circle Windows draws where a finger or pen taps a WPF window could stay behind on the screen
+    /// when the window under it hid or closed at once (the dock hiding, an overlay closing after a tap).
+    /// QiDock's windows answer every tap themselves, so that circle is turned off for all of them before
+    /// the first one is made. Press and hold (a right click by touch) keeps working.
+    /// </summary>
+    private static void TurnOffTouchRings()
+    {
+        foreach (var property in new[] { System.Windows.Input.Stylus.IsTapFeedbackEnabledProperty, System.Windows.Input.Stylus.IsTouchFeedbackEnabledProperty, System.Windows.Input.Stylus.IsFlicksEnabledProperty })
+        {
+            try
+            {
+                property.OverrideMetadata(typeof(Window), new FrameworkPropertyMetadata(false));
+            }
+            catch (ArgumentException ex)
+            {
+                Trace.TraceWarning("Touch feedback stays on: {0}", ex.Message);
+            }
+        }
+    }
     public ApplicationPreferences Preferences { get; } = new(new DockSettingsStore());
 
 #if DEBUG
@@ -21,6 +42,7 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        TurnOffTouchRings();
         UiText.Current.SetLanguage(Preferences.Current.Language);
         ThemeManager.Apply(Preferences.Current.Theme, Preferences.Current.SurfaceOpacity, Preferences.Current.Style);
 #if DEBUG

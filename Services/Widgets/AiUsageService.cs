@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace QiDock.Services.Widgets;
 
@@ -39,6 +40,18 @@ public sealed class AiUsageService
     private DateTime _claudeFetchedAt = DateTime.MinValue;
     private DateTime _claudeBackoffUntil = DateTime.MinValue;
 
+    public AiUsageService()
+    {
+        Cached = LastKnown();
+        _claude = Cached.FirstOrDefault(u => u.Provider == ClaudeId);
+    }
+
+    /// <summary>
+    /// The last readings saved on this PC (percentages and reset times only), so the tiles show numbers the moment
+    /// QiDock starts instead of a dash until the first answer arrives. Limits that have reset since are left out.
+    /// </summary>
+    public IReadOnlyList<ProviderUsage> Cached { get; }
+
     public async Task<IReadOnlyList<ProviderUsage>> FetchAsync(bool force, CancellationToken token)
     {
         var results = new List<ProviderUsage>();
@@ -46,7 +59,61 @@ public sealed class AiUsageService
         if (claude is not null) results.Add(claude);
         var codex = await Task.Run(ReadCodex, token).ConfigureAwait(false);
         if (codex is not null) results.Add(codex);
+        SaveLastKnown(results);
         return results;
+    }
+
+    private static readonly string LastKnownPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QiDock", "ai-usage-last.json");
+    private static readonly object LastKnownLock = new();
+
+    private static IReadOnlyList<ProviderUsage> LastKnown()
+    {
+        try
+        {
+            lock (LastKnownLock)
+            {
+                if (!File.Exists(LastKnownPath)) return [];
+                var saved = JsonSerializer.Deserialize<List<ProviderUsage>>(File.ReadAllText(LastKnownPath)) ?? [];
+                var now = DateTime.Now;
+                return saved
+                    .Select(u => u with { Windows = u.Windows.Where(w => w.ResetsAt is not { } reset || reset > now).ToList(), Error = null })
+                    .Where(u => u.Windows.Count > 0)
+                    .ToList();
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or NotSupportedException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>Keeps each provider's latest good reading; a failed reading leaves the saved one as it was.</summary>
+    private static void SaveLastKnown(IReadOnlyList<ProviderUsage> results)
+    {
+        var good = results.Where(u => u.Error is null && u.Windows.Count > 0).ToList();
+        if (good.Count == 0) return;
+        try
+        {
+            lock (LastKnownLock)
+            {
+                List<ProviderUsage> saved = [];
+                if (File.Exists(LastKnownPath))
+                {
+                    try { saved = JsonSerializer.Deserialize<List<ProviderUsage>>(File.ReadAllText(LastKnownPath)) ?? []; }
+                    catch (JsonException) { }
+                }
+                var merged = saved.Where(s => good.All(g => g.Provider != s.Provider)).Concat(good).ToList();
+                Directory.CreateDirectory(Path.GetDirectoryName(LastKnownPath)!);
+                var temporary = LastKnownPath + ".tmp";
+                File.WriteAllText(temporary, JsonSerializer.Serialize(merged));
+                File.Move(temporary, LastKnownPath, true);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            System.Diagnostics.Trace.TraceWarning("AI usage not saved: {0}", ex.Message);
+        }
     }
 
     // ---- Claude ----------------------------------------------------------------------------
@@ -61,19 +128,30 @@ public sealed class AiUsageService
         var credentials = ReadClaudeCredentials();
         if (credentials is null) return null;
         var (accessToken, expiresAt, plan) = credentials.Value;
-        if (expiresAt is { } expiry && expiry <= DateTime.Now)
+        // Claude used from the desktop app keeps its own sign-in, so this file's key runs out unless renewed here.
+        if (expiresAt is { } expiry && expiry <= DateTime.Now.AddMinutes(1))
         {
-            _claude = new ProviderUsage(ClaudeId, "Claude", plan, _claude?.Windows ?? [], now, UiText.Get("AiClaudeExpired"));
-            _claudeFetchedAt = now;
-            return _claude;
+            if (await RenewClaudeSignInAsync(false, token).ConfigureAwait(false) && ReadClaudeCredentials() is { } renewed)
+                (accessToken, expiresAt, plan) = renewed;
+            else
+            {
+                _claude = new ProviderUsage(ClaudeId, "Claude", plan, _claude?.Windows ?? [], now, UiText.Get("AiClaudeExpired"));
+                _claudeFetchedAt = now;
+                return _claude;
+            }
         }
 
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.anthropic.com/api/oauth/usage");
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-            request.Headers.Add("anthropic-beta", "oauth-2025-04-20");
-            using var response = await WidgetHttp.Client.SendAsync(request, token).ConfigureAwait(false);
+            var response = await AskUsageAsync(accessToken, token).ConfigureAwait(false);
+            if (response.StatusCode is HttpStatusCode.Unauthorized && await RenewClaudeSignInAsync(true, token).ConfigureAwait(false)
+                && ReadClaudeCredentials() is { } fresh)
+            {
+                response.Dispose();
+                accessToken = fresh.AccessToken;
+                response = await AskUsageAsync(accessToken, token).ConfigureAwait(false);
+            }
+            using var _ = response;
             if (response.StatusCode == HttpStatusCode.TooManyRequests)
             {
                 _claudeBackoffUntil = now.AddMinutes(10);
@@ -168,12 +246,105 @@ public sealed class AiUsageService
         windows.Add(new UsageWindow(label, Math.Clamp(used, 0, 100), resets, length, key));
     }
 
-    private static (string AccessToken, DateTime? ExpiresAt, string? Plan)? ReadClaudeCredentials()
+    private static async Task<HttpResponseMessage> AskUsageAsync(string accessToken, CancellationToken token)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.anthropic.com/api/oauth/usage");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        request.Headers.Add("anthropic-beta", "oauth-2025-04-20");
+        return await WidgetHttp.Client.SendAsync(request, token).ConfigureAwait(false);
+    }
+
+    private static string ClaudeCredentialsPath()
     {
         var directory = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
         if (string.IsNullOrWhiteSpace(directory))
             directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude");
-        var path = Path.Combine(directory, ".credentials.json");
+        return Path.Combine(directory, ".credentials.json");
+    }
+
+    // The same renewal Claude Code does itself: its public app id and Anthropic's token address.
+    private const string ClaudeTokenUrl = "https://platform.claude.com/v1/oauth/token";
+    private const string ClaudeClientId = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+    private static readonly SemaphoreSlim RenewLock = new(1, 1);
+    private static DateTime _renewFailedAt = DateTime.MinValue;
+
+    /// <summary>
+    /// Renews Claude Code's expired sign-in with its refresh key and writes the new keys back into the same file, so
+    /// Claude Code keeps working with them. True when the file now holds a usable key (also when Claude Code or the
+    /// other usage reader renewed it meanwhile). A failed attempt waits ten minutes before the next one.
+    /// </summary>
+    private static async Task<bool> RenewClaudeSignInAsync(bool force, CancellationToken token)
+    {
+        await RenewLock.WaitAsync(token).ConfigureAwait(false);
+        try
+        {
+            var path = ClaudeCredentialsPath();
+            if (!File.Exists(path)) return false;
+            if (JsonNode.Parse(await File.ReadAllTextAsync(path, token).ConfigureAwait(false)) is not JsonObject root
+                || root["claudeAiOauth"] is not JsonObject oauth) return false;
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            if (!force && oauth["expiresAt"] is JsonValue e && e.TryGetValue<long>(out var expires) && expires > nowMs + 60_000) return true;
+            if (DateTime.Now - _renewFailedAt < TimeSpan.FromMinutes(10)) return false;
+            if (oauth["refreshToken"] is not JsonValue r || !r.TryGetValue<string>(out var refreshToken) || string.IsNullOrEmpty(refreshToken)) return false;
+
+            var body = new JsonObject
+            {
+                ["grant_type"] = "refresh_token",
+                ["refresh_token"] = refreshToken,
+                ["client_id"] = ClaudeClientId
+            };
+            if (oauth["scopes"] is JsonArray scopes && scopes.Count > 0)
+                body["scope"] = string.Join(' ', scopes.Select(s => s?.GetValue<string>()).Where(s => !string.IsNullOrEmpty(s)));
+            using var request = new HttpRequestMessage(HttpMethod.Post, ClaudeTokenUrl)
+            {
+                Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json")
+            };
+            using var response = await WidgetHttp.Client.SendAsync(request, token).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                _renewFailedAt = DateTime.Now;
+                System.Diagnostics.Trace.TraceWarning("Claude sign-in renewal failed: {0}", (int)response.StatusCode);
+                return false;
+            }
+            using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false), cancellationToken: token).ConfigureAwait(false);
+            var answer = json.RootElement;
+            if (!answer.TryGetProperty("access_token", out var access) || access.ValueKind != JsonValueKind.String
+                || !answer.TryGetProperty("expires_in", out var lifetime) || lifetime.ValueKind != JsonValueKind.Number)
+            {
+                _renewFailedAt = DateTime.Now;
+                return false;
+            }
+            oauth["accessToken"] = access.GetString();
+            if (answer.TryGetProperty("refresh_token", out var nextRefresh) && nextRefresh.ValueKind == JsonValueKind.String)
+                oauth["refreshToken"] = nextRefresh.GetString();
+            oauth["expiresAt"] = nowMs + (long)(lifetime.GetDouble() * 1000);
+            if (answer.TryGetProperty("refresh_token_expires_in", out var refreshLifetime) && refreshLifetime.ValueKind == JsonValueKind.Number)
+                oauth["refreshTokenExpiresAt"] = nowMs + (long)(refreshLifetime.GetDouble() * 1000);
+            if (answer.TryGetProperty("scope", out var granted) && granted.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(granted.GetString()))
+                oauth["scopes"] = new JsonArray(granted.GetString()!.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(s => (JsonNode?)s).ToArray());
+
+            // Written beside it first and then swapped in, so Claude Code never reads a half-written file.
+            var temporary = path + ".qidock-renew";
+            await File.WriteAllTextAsync(temporary, root.ToJsonString(), token).ConfigureAwait(false);
+            File.Move(temporary, path, overwrite: true);
+            return true;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or IOException or UnauthorizedAccessException or InvalidOperationException or FormatException)
+        {
+            if (ex is TaskCanceledException && token.IsCancellationRequested) throw;
+            _renewFailedAt = DateTime.Now;
+            System.Diagnostics.Trace.TraceWarning("Claude sign-in renewal failed: {0}", ex.GetType().Name);
+            return false;
+        }
+        finally
+        {
+            RenewLock.Release();
+        }
+    }
+
+    private static (string AccessToken, DateTime? ExpiresAt, string? Plan)? ReadClaudeCredentials()
+    {
+        var path = ClaudeCredentialsPath();
         if (!File.Exists(path)) return null;
         try
         {

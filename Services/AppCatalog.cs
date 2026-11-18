@@ -5,8 +5,38 @@ using System.Runtime.InteropServices;
 namespace QiDock.Services;
 
 /// <summary>An installed app as Windows lists it in "All apps": its name and shell parsing name.</summary>
-public sealed record InstalledApp(string Name, string Id)
+/// <param name="Target">The program file a desktop app starts (null for Store apps, which have none).</param>
+public sealed record InstalledApp(string Name, string Id, string? Target = null)
 {
+    /// <summary>Starts the app's program file as administrator (Windows asks for permission first).</summary>
+    public void LaunchAsAdministrator()
+    {
+        if (Target is null) return;
+        try
+        {
+            Process.Start(new ProcessStartInfo(Target) { UseShellExecute = true, Verb = "runas", WorkingDirectory = Path.GetDirectoryName(Target) ?? "" })?.Dispose();
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            // Declining the permission prompt lands here too.
+            Trace.TraceWarning("Could not start {0} as administrator: {1}", Target, ex.Message);
+        }
+    }
+
+    /// <summary>Opens the folder of the app's program file with the file selected.</summary>
+    public void ShowFileLocation()
+    {
+        if (Target is null) return;
+        try
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{Target}\"") { UseShellExecute = true })?.Dispose();
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            Trace.TraceWarning("Could not show {0}: {1}", Target, ex.Message);
+        }
+    }
+
     public void Launch()
     {
         try
@@ -66,7 +96,12 @@ public static class AppCatalog
                 string name = item.Name ?? "";
                 string id = item.Path ?? "";
                 if (name.Length == 0 || id.Length == 0 || IsNoise(name, id) || !seen.Add(name)) continue;
-                list.Add(new InstalledApp(name, id));
+                // The program a desktop app's Start menu entry points at (empty for Store apps).
+                string? target = null;
+                try { target = item.ExtendedProperty("System.Link.TargetParsingPath") as string; }
+                catch (COMException) { }
+                if (string.IsNullOrWhiteSpace(target) || !target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) target = null;
+                list.Add(new InstalledApp(name, id, target));
             }
         }
         finally

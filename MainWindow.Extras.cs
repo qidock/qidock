@@ -45,6 +45,16 @@ public partial class MainWindow
         ControlCenter.OpenAppSettings = () => OpenSettings_Click(this, new RoutedEventArgs());
         _downloadsPopup = new WidgetPopup(DownloadsButton);
         _downloadsPopup.Closed += (_, _) => _autoHideController?.EvaluateState();
+        AppGridWindow.PinToDock = (target, name) => AddShortcuts([target], name);
+        AppGridWindow.IsPinned = target => _pinnedApps.Any(a => string.Equals(a.ExecutablePath, target, StringComparison.OrdinalIgnoreCase));
+        // The app grid's icons are read once the desktop has settled, so its first opening is instant.
+        var prewarm = new DispatcherTimer(DispatcherPriority.ApplicationIdle) { Interval = TimeSpan.FromSeconds(20) };
+        prewarm.Tick += (_, _) =>
+        {
+            prewarm.Stop();
+            AppGridWindow.Prewarm();
+        };
+        prewarm.Start();
         _fullScreenWatch.Tick += (_, _) => UpdateFullScreenAwareness(GetForegroundWindow());
         _fullScreenWatch.Start();
         _memoryTrim.Tick += (_, _) => TrimMemoryWhenIdle();
@@ -98,6 +108,8 @@ public partial class MainWindow
             UnregisterHotKey(_extrasHandle, HotkeyControlCenter);
             for (var i = 0; i < 9; i++) UnregisterHotKey(_extrasHandle, HotkeyProfileFirst + i);
         }
+        // Never leave a window off the screen when QiDock closes.
+        BringBackForcedAside(activate: false);
         _downloadsPopup?.Close();
         if (ControlCenter.IsCreated) ControlCenter.Shared.Close();
     }

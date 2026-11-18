@@ -34,9 +34,6 @@ public sealed class WidgetBar : StackPanel, IDisposable
     /// <summary>Right-click on a profile tab: the argument is the profile index and the tab.</summary>
     public event EventHandler<(int Index, FrameworkElement Anchor)>? ProfileMenuRequested;
 
-    /// <summary>The profile tile was clicked; the argument is the tile.</summary>
-    public event EventHandler<FrameworkElement>? ProfilesRequested;
-
     /// <summary>Profile tabs ("Varsayılan", "İş", "+"), shown under the bar by its window.</summary>
     public StackPanel ProfileStrip { get; } = new() { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
 
@@ -114,7 +111,11 @@ public sealed class WidgetBar : StackPanel, IDisposable
             widget.LayoutChanged += (_, _) => LayoutInvalidated?.Invoke(this, EventArgs.Empty);
             widget.SettingsRequested += (_, _) => SettingsRequested?.Invoke(this, EventArgs.Empty);
             widget.SettingsUpdateRequested += (_, change) => SettingsEdited?.Invoke(this, change(_settings));
-            if (widget is ProfileWidget profile) profile.MenuRequested += (_, anchor) => ProfilesRequested?.Invoke(this, anchor);
+            if (widget is ProfileWidget profile)
+            {
+                profile.IsEditing = () => IsEditing;
+                profile.ToggleEditing = () => SetEditing(!IsEditing);
+            }
         }
         SizeChanged += (_, e) =>
         {

@@ -99,6 +99,37 @@
         </Setter>
     </Style>
 
+    <!-- Full-width row inside a card (the profile list and its actions): a soft tint on hover, like a menu item. -->
+    <Style x:Key="WidgetRowButton" TargetType="Button">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+        <Setter Property="Padding" Value="10,0" />
+        <Setter Property="Height" Value="34" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Surface" Background="{TemplateBinding Background}" CornerRadius="9" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Stretch" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Surface" Property="Background" Value="{DynamicResource SurfaceHover}" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Surface" Property="Background" Value="{DynamicResource SurfacePressed}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Surface" Property="Opacity" Value="0.4" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- Rounded pill button (Refresh, New event…). -->
     <Style x:Key="WidgetPillButton" TargetType="Button">
         <Setter Property="Background" Value="{DynamicResource WidgetTileFill}" />

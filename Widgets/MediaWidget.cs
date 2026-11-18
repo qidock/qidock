@@ -34,6 +34,7 @@ public sealed partial class MediaWidget : DockWidget
     private bool _live = true;
     private bool _playing;
     private string? _thumbnailKey;
+    private string? _artSignature;   // which picture the cover shows, so an unchanged one is not redrawn
     private string _album = "";
 
     public MediaWidget()
@@ -245,12 +246,14 @@ public sealed partial class MediaWidget : DockWidget
             _next.IsEnabled = playback?.Controls?.IsNextEnabled != false;
 
             _album = properties?.AlbumTitle ?? "";
+            // Browsers first send their own logo as the cover and the real one a moment later for the same
+            // song, so the cover is read again on every change (and once more shortly after a new song).
             var key = $"{title}|{artist}|{properties?.AlbumTitle}";
-            if (key != _thumbnailKey)
-            {
-                _thumbnailKey = key;
-                await LoadArtworkAsync(properties?.Thumbnail, version);
-            }
+            var newSong = key != _thumbnailKey;
+            _thumbnailKey = key;
+            await LoadArtworkAsync(properties?.Thumbnail, version, newSong);
+            if (version != _refreshVersion) return;
+            if (newSong) RefreshAgainSoon();
             SetVisible(true);
             UpdateProgressTimer();
             if (CardOpen) FillCard();
@@ -261,11 +264,25 @@ public sealed partial class MediaWidget : DockWidget
         }
     }
 
-    private async Task LoadArtworkAsync(Windows.Storage.Streams.IRandomAccessStreamReference? reference, int version)
+    private void RefreshAgainSoon()
+    {
+        var timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            _ = RefreshAsync();
+        };
+        timer.Start();
+    }
+
+    private async Task LoadArtworkAsync(Windows.Storage.Streams.IRandomAccessStreamReference? reference, int version, bool newSong)
     {
         if (reference is null)
         {
+            // A player may leave the cover out for a moment (pausing); the last one stays for the same song.
+            if (!newSong) return;
             _art.Source = null;
+            _artSignature = null;
             TintCard(null);
             return;
         }
@@ -278,6 +295,10 @@ public sealed partial class MediaWidget : DockWidget
             await source.CopyToAsync(memory);
             memory.Position = 0;
             if (version != _refreshVersion) return;
+            // The same picture again: nothing to redraw.
+            var signature = Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(memory.GetBuffer().AsSpan(0, (int)memory.Length)));
+            if (signature == _artSignature && _art.Source is not null) return;
+            _artSignature = signature;
 
             var image = new BitmapImage();
             image.BeginInit();
@@ -304,6 +325,7 @@ public sealed partial class MediaWidget : DockWidget
     {
         _playing = false;
         _thumbnailKey = null;
+        _artSignature = null;
         _art.Source = null;
         _album = "";
         TintCard(null);

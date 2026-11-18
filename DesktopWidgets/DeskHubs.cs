@@ -304,6 +304,7 @@ internal sealed class MediaHub : HubBase
     private bool _active;
     private int _version;
     private string? _artKey;
+    private string? _artSignature;
 
     public string Title { get; private set; } = "";
     public string Artist { get; private set; } = "";
@@ -410,11 +411,21 @@ internal sealed class MediaHub : HubBase
             Duration = timeline.EndTime - timeline.StartTime;
             PositionAt = timeline.LastUpdatedTime.UtcDateTime == default ? DateTime.UtcNow : timeline.LastUpdatedTime.UtcDateTime;
             if (PositionAt > DateTime.UtcNow) PositionAt = DateTime.UtcNow;
+            // Browsers send their logo first and the real cover a moment later for the same song:
+            // read the cover on every change, and once more shortly after a new song.
             var key = $"{Title}|{Artist}|{properties?.AlbumTitle}";
-            if (key != _artKey)
+            var newSong = key != _artKey;
+            _artKey = key;
+            await LoadArtAsync(properties?.Thumbnail, version, newSong);
+            if (newSong && version == _version)
             {
-                _artKey = key;
-                await LoadArtAsync(properties?.Thumbnail, version);
+                var again = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
+                again.Tick += (_, _) =>
+                {
+                    again.Stop();
+                    if (_active) _ = RefreshAsync();
+                };
+                again.Start();
             }
         }
         catch (Exception ex) when (ex is COMException or InvalidOperationException or UnauthorizedAccessException)
@@ -438,11 +449,13 @@ internal sealed class MediaHub : HubBase
         return name.Length > 0 ? char.ToUpper(name[0], CultureInfo.CurrentCulture) + name[1..] : name;
     }
 
-    private async Task LoadArtAsync(Windows.Storage.Streams.IRandomAccessStreamReference? reference, int version)
+    private async Task LoadArtAsync(Windows.Storage.Streams.IRandomAccessStreamReference? reference, int version, bool newSong)
     {
         if (reference is null)
         {
+            if (!newSong) return;
             Art = null;
+            _artSignature = null;
             return;
         }
         try
@@ -453,6 +466,9 @@ internal sealed class MediaHub : HubBase
             await source.CopyToAsync(memory);
             memory.Position = 0;
             if (version != _version) return;
+            var signature = Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(memory.GetBuffer().AsSpan(0, (int)memory.Length)));
+            if (signature == _artSignature && Art is not null) return;
+            _artSignature = signature;
             var image = new BitmapImage();
             image.BeginInit();
             image.CacheOption = BitmapCacheOption.OnLoad;
