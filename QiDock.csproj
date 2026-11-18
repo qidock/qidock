@@ -9,7 +9,7 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>QiDock</AssemblyName>
     <RootNamespace>QiDock</RootNamespace>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Product>QiDock</Product>
     <AssemblyTitle>QiDock</AssemblyTitle>
