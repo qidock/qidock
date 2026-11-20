@@ -35,18 +35,40 @@ public sealed class AiLimitsWidget : DockWidget
     private IReadOnlyList<ProviderUsage> _usage = [];
     private CancellationTokenSource? _load;
     private string _layoutSignature = "";
+    // In the dock: one small tile (the logos stacked, the highest use); on hover the rings slide out sideways
+    // over the dock, so the dock itself never changes width.
+    private readonly StackPanel _summary = new() { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(7, 0, 9, 0) };
+    private readonly Grid _face = new() { ClipToBounds = true };
+    private readonly DispatcherTimer _hoverOpen = new(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(140) };
+    private readonly DispatcherTimer _hoverClose = new(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(300) };
+    private bool _expanded;
 
     public AiLimitsWidget()
     {
         _cards = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         // A plain tile: each ring inside is its own button.
-        _tile = new Border { Child = _cards, Padding = new Thickness(3, 0, 3, 0), Margin = new Thickness(3, 0, 3, 0), BorderThickness = new Thickness(1), VerticalAlignment = VerticalAlignment.Center };
+        _tile = new Border { Child = _face, Padding = new Thickness(3, 0, 3, 0), Margin = new Thickness(3, 0, 3, 0), BorderThickness = new Thickness(1), VerticalAlignment = VerticalAlignment.Center };
         _tile.SetResourceReference(Border.BackgroundProperty, "WidgetTileFill");
         _tile.SetResourceReference(Border.BorderBrushProperty, "WidgetTileStroke");
         _tile.SetResourceReference(FrameworkElement.HeightProperty, "WidgetTileHeight");
         _tile.CornerRadius = new CornerRadius(11);
         _popup = new WidgetPopup(_tile);
         _popup.Closed += (_, _) => StopSessions();
+        _summary.HorizontalAlignment = HorizontalAlignment.Left;
+        _cards.HorizontalAlignment = HorizontalAlignment.Left;
+        _cards.Opacity = 0;
+        _cards.Visibility = Visibility.Collapsed;
+        _face.Children.Add(_summary);
+        _face.Children.Add(_cards);
+        _hoverOpen.Tick += (_, _) => { _hoverOpen.Stop(); Expand(); };
+        _hoverClose.Tick += (_, _) =>
+        {
+            _hoverClose.Stop();
+            if (!_tile.IsMouseOver) Collapse(instant: false);
+        };
+        _tile.MouseEnter += (_, _) => { _hoverClose.Stop(); if (!_expanded) _hoverOpen.Start(); };
+        _tile.MouseLeave += (_, _) => { _hoverOpen.Stop(); if (_expanded) _hoverClose.Start(); };
+        _tile.MouseLeftButtonUp += (_, _) => { if (!_expanded && Busiest() is { } busiest) ToggleProvider(busiest); };
         _claudeWatch.Changed += () => _ = LoadSessionsAsync();
         _sessionTick.Tick += (_, _) => _ = LoadSessionsAsync(); // "3 dk önce" and sessions going quiet
         _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMinutes(1) };
@@ -71,10 +93,15 @@ public sealed class AiLimitsWidget : DockWidget
         _timer.Stop();
         _load?.Cancel();
         _popup.Close();
+        Collapse(instant: true);
         StopSessions();
     }
 
-    public override void ClosePopup() => _popup.Close();
+    public override void ClosePopup()
+    {
+        _popup.Close();
+        Collapse(instant: true);
+    }
 
     private async Task RefreshAsync(bool force)
     {
@@ -99,8 +126,91 @@ public sealed class AiLimitsWidget : DockWidget
 
     // ---- Dock tile ---------------------------------------------------------------------------
 
+    private string? Busiest() =>
+        _usage.Count == 0 ? AiUsageService.ClaudeId
+        : _usage.OrderByDescending(p => p.Error is null && p.Windows.Count > 0 ? p.Windows.Max(w => w.UsedPercent) : -1).First().Provider;
+
+    /// <summary>The tile: the providers' logos overlapping, and the highest use among them.</summary>
+    private void RenderSummary()
+    {
+        _summary.Children.Clear();
+        var providers = _usage.Count == 0 ? [AiUsageService.ClaudeId] : _usage.Select(p => p.Provider).ToList();
+        const double Mark = 20, Step = 12;
+        var stack = new Grid { Width = Mark + 2 + (providers.Count - 1) * Step, Height = Mark + 4, VerticalAlignment = VerticalAlignment.Center };
+        for (var i = providers.Count - 1; i >= 0; i--)
+        {
+            // A thin dark ring keeps overlapping logos apart.
+            stack.Children.Add(new Border
+            {
+                Width = Mark + 2, Height = Mark + 2, CornerRadius = new CornerRadius(7), Background = Ui.Solid("#E61C1C1F"), Padding = new Thickness(1),
+                HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(i * Step, 0, 0, 0), Child = Logo(providers[i], Mark)
+            });
+        }
+        _summary.Children.Add(stack);
+        var used = _usage.Where(p => p.Error is null && p.Windows.Count > 0).Select(p => p.Windows.Max(w => w.UsedPercent)).DefaultIfEmpty(-1).Max();
+        var text = Ui.Text(used >= 0 ? UiText.Percent(used) : "—", 11.5, FontWeights.SemiBold, brush: used >= 0 ? Ui.UsageBrush(used) : null);
+        text.Margin = new Thickness(6, 0, 0, 0);
+        text.VerticalAlignment = VerticalAlignment.Center;
+        _summary.Children.Add(text);
+    }
+
+    /// <summary>
+    /// The tile opens out to the right into one ring per provider. The dock keeps its width meanwhile, so what
+    /// stands after the tile slides out of the dock's end, and comes back when the tile closes.
+    /// </summary>
+    private void Expand()
+    {
+        if (_expanded || _popup.IsOpen || !_tile.IsVisible) return;
+        _expanded = true;
+        var chrome = _tile.Padding.Left + _tile.Padding.Right + _tile.BorderThickness.Left + _tile.BorderThickness.Right;
+        var from = _tile.ActualWidth;
+        _cards.Visibility = Visibility.Visible;
+        _cards.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        var to = Math.Max(from, _cards.DesiredSize.Width + chrome);
+        RaiseExpanding(true);
+        var ease = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut };
+        _tile.BeginAnimation(FrameworkElement.WidthProperty, new System.Windows.Media.Animation.DoubleAnimation(from, to, TimeSpan.FromMilliseconds(240)) { EasingFunction = ease });
+        _summary.BeginAnimation(UIElement.OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(0, TimeSpan.FromMilliseconds(120)));
+        _cards.BeginAnimation(UIElement.OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(1, TimeSpan.FromMilliseconds(200)) { BeginTime = TimeSpan.FromMilliseconds(50) });
+    }
+
+    private void Collapse(bool instant)
+    {
+        _hoverOpen.Stop();
+        _hoverClose.Stop();
+        if (!_expanded) return;
+        _expanded = false;
+        void Done()
+        {
+            if (_expanded) return; // opened again meanwhile
+            _tile.BeginAnimation(FrameworkElement.WidthProperty, null);
+            _tile.Width = double.NaN;
+            _summary.BeginAnimation(UIElement.OpacityProperty, null);
+            _summary.Opacity = 1;
+            _cards.BeginAnimation(UIElement.OpacityProperty, null);
+            _cards.Opacity = 0;
+            _cards.Visibility = Visibility.Collapsed;
+            RaiseExpanding(false);
+        }
+        if (instant)
+        {
+            Done();
+            return;
+        }
+        var chrome = _tile.Padding.Left + _tile.Padding.Right + _tile.BorderThickness.Left + _tile.BorderThickness.Right;
+        var to = _summary.DesiredSize.Width + chrome;
+        var ease = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseIn };
+        var shrink = new System.Windows.Media.Animation.DoubleAnimation(_tile.ActualWidth, to, TimeSpan.FromMilliseconds(200)) { EasingFunction = ease };
+        shrink.Completed += (_, _) => Done();
+        _tile.BeginAnimation(FrameworkElement.WidthProperty, shrink);
+        _cards.BeginAnimation(UIElement.OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(0, TimeSpan.FromMilliseconds(110)));
+        _summary.BeginAnimation(UIElement.OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(1, TimeSpan.FromMilliseconds(160)) { BeginTime = TimeSpan.FromMilliseconds(60) });
+    }
+
     private void Render()
     {
+        RenderSummary();
         _cards.Children.Clear();
         if (_usage.Count == 0)
         {
@@ -177,6 +287,7 @@ public sealed class AiLimitsWidget : DockWidget
     /// <summary>A ring was clicked: its provider's card opens (another provider's card on show switches over).</summary>
     private void ToggleProvider(string provider)
     {
+        Collapse(instant: true);
         if (_popup.IsOpen && _shown != provider)
         {
             _shown = provider;
@@ -361,7 +472,13 @@ public sealed class AiLimitsWidget : DockWidget
         }
 
         var updated = Ui.Text(UiText.Format("AiUpdated", When(provider.UpdatedAt),
-            provider.Provider == AiUsageService.CodexId ? UiText.Get("AiSourceCodex") : UiText.Get("AiSourceClaude")), 10, brushKey: "TextSecondary");
+            provider.Provider switch
+            {
+                AiUsageService.CodexId => UiText.Get("AiSourceCodex"),
+                AiUsageService.GeminiId => UiText.Get("AiSourceGemini"),
+                AiUsageService.OpenCodeId => UiText.Get("AiSourceOpenCode"),
+                _ => UiText.Get("AiSourceClaude")
+            }), 10, brushKey: "TextSecondary");
         updated.Opacity = 0.8;
         updated.Margin = new Thickness(0, 8, 0, 0);
         content.Children.Add(updated);
@@ -518,7 +635,23 @@ public sealed class AiLimitsWidget : DockWidget
     internal static FrameworkElement Logo(string provider, double size)
     {
         var canvas = new Canvas { Width = 24, Height = 24 };
-        if (provider == AiUsageService.CodexId)
+        if (provider == AiUsageService.GeminiId)
+        {
+            // A four-pointed spark on Gemini's blue-to-violet.
+            canvas.Children.Add(new Rectangle
+            {
+                Width = 24, Height = 24, RadiusX = 6, RadiusY = 6,
+                Fill = new LinearGradientBrush(Color.FromRgb(0x4F, 0x9B, 0xF5), Color.FromRgb(0xA4, 0x6B, 0xE8), new Point(0, 0), new Point(1, 1))
+            });
+            canvas.Children.Add(new Path { Data = Geometry.Parse("M12,4 C12.6,9 15,11.4 20,12 C15,12.6 12.6,15 12,20 C11.4,15 9,12.6 4,12 C9,11.4 11.4,9 12,4 Z"), Fill = Brushes.White });
+        }
+        else if (provider == AiUsageService.OpenCodeId)
+        {
+            // OpenCode's dark square with a light frame.
+            canvas.Children.Add(new Rectangle { Width = 24, Height = 24, RadiusX = 6, RadiusY = 6, Fill = Ui.Solid("#FF1E1E22") });
+            canvas.Children.Add(new Path { Data = Geometry.Parse("M7,6 H17 V18 H7 Z M9.5,8.5 V15.5 H14.5 V8.5 Z"), Fill = Ui.Solid("#FFEDEDED") });
+        }
+        else if (provider == AiUsageService.CodexId)
         {
             canvas.Children.Add(new Rectangle { Width = 24, Height = 24, RadiusX = 6, RadiusY = 6, Fill = Ui.Solid("#FFF4F4F4") });
             var ring = new Ellipse { Width = 14, Height = 14, Stroke = Ui.Solid("#FF111111"), StrokeThickness = 2.2 };

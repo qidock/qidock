@@ -97,6 +97,13 @@ public partial class MainWindow : Window
         _preferences.Changed += Preferences_Changed;
         LoadPinnedApps(_preferences.Current.PinOrder);
         _widgetBar.LayoutInvalidated += WidgetBar_LayoutInvalidated;
+        _widgetBar.WidgetExpanding += (_, on) =>
+        {
+            if (!WidgetsInDock) return;
+            // Opening out: the widgets keep their width and clip what is pushed past the dock's end.
+            WidgetHost.Width = on ? WidgetHost.ActualWidth : double.NaN;
+            WidgetHost.ClipToBounds = on;
+        };
         WidgetHost.SizeChanged += (_, e) =>
         {
             if (!WidgetsInDock || Math.Abs(e.NewSize.Width - e.PreviousSize.Width) < 0.5 || _dockRefitQueued) return;
@@ -142,6 +149,7 @@ public partial class MainWindow : Window
         {
             await Task.Delay(TimeSpan.FromSeconds(10));
             new StartupRegistration().UpgradeToTask();
+            StartupRegistration.EnsureStartMenuShortcut();
         });
         if (!ExcludeFromTaskSwitcher(source.Handle))
         {
@@ -184,8 +192,11 @@ public partial class MainWindow : Window
             DockSurfaceTranslate,
             DockSurface,
             () => _holdDockUp || (_openContextMenu?.IsOpen == true) || _thumbnailPreview.IsVisible || _draggedApp is not null || (_settingsWindow?.IsVisible == true) || _genie.IsBusy
-                || NotificationCenterOpen || _downloadsPopup?.IsOpen == true);
+                || NotificationCenterOpen || _downloadsPopup?.IsOpen == true || _widgetBar.IsAnyPopupOpen);
+        // A widget card or the AI strip was open past the dock's edge: once it closes the dock may hide again.
+        Widgets.WidgetPopup.AnyClosed += (_, _) => Dispatcher.BeginInvoke(() => _autoHideController?.EvaluateState(), DispatcherPriority.Background);
         _autoHideController.SetMode(_preferences.Current.AutoHide);
+        _autoHideController.WindowBehindChanged += RefreshDockGlass;
         AttachHudToAutoHide();
         ApplyAutoHideHitArea();
 
@@ -1130,6 +1141,13 @@ public partial class MainWindow : Window
     {
         var current = _preferences.Current;
         Application.Current.Resources["DockHoverScale"] = current.Magnify ? Math.Clamp(current.MagnifyScale, 1.1, 2.2) : 1.0;
+        var scale = Math.Clamp(current.DockScale, 0.8, 1.6);
+        if (Math.Abs(scale - TaskbarReplacementSession.Scale) < 0.001) return;
+        TaskbarReplacementSession.Scale = scale;
+        ApplyWidgetHostTransform();
+        // A bigger dock needs a taller strip of the screen: the session reserves it and lays the dock out again.
+        if (_replacementSession is not null) _replacementSession.RefreshPosition();
+        else if (_dockArea.Width > 0) ApplyTaskbarLayout(_dockArea);
     }
 
     private void DockApp_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
@@ -1760,6 +1778,8 @@ public partial class MainWindow : Window
         ApplyWidgetPlacement();
         ApplyDockEdge();
         _topBar?.SetPeekEnabled(_preferences.Current.TopBarPeek);
+        ApplyNotchBrowser();
+        ApplyDockGlass();
         _deskWidgets?.SettingsChanged();
         ApplyToastHiding();
         ApplyDesktopIcons(_preferences.Current.HideDesktopIcons);
@@ -1900,16 +1920,19 @@ public partial class MainWindow : Window
         // otherwise the bottom of the window clips it.
         var stripHeight = Math.Max(36, area.Height);
         var bottomGap = stripHeight >= 56 ? 6.0 : stripHeight >= 44 ? 4.0 : 2.0;
-        var barHeight = Math.Min(66, stripHeight - bottomGap);
+        var scale = TaskbarReplacementSession.Scale;
+        var barHeight = Math.Min(Math.Round(66 * scale), stripHeight - bottomGap);
         DockSurface.Margin = new Thickness(12, 0, 12, bottomGap);
         var verticalChrome = DockSurface.Padding.Top + DockSurface.Padding.Bottom
             + DockSurface.BorderThickness.Top + DockSurface.BorderThickness.Bottom;
         var cellHeight = Math.Max(26, barHeight - verticalChrome);
+        _dockFullCell = cellHeight;
+        _dockChrome = verticalChrome;
         DockSurface.Height = cellHeight + verticalChrome;
         Application.Current.Resources["DockCellHeight"] = cellHeight;
         // Tile on top, a small strip under it for the running dot.
         // The same tile size as before; the 13 DIP left over is split above and below it (the dot sits below).
-        _tileSizeForHeight = Math.Clamp(cellHeight - 13, 22, 50);
+        _tileSizeForHeight = Math.Clamp(cellHeight - Math.Round(13 * scale), 22, Math.Round(50 * scale));
         ApplyTileSize(_tileSizeForHeight);
         ResizeDockToContent();
     }
@@ -1925,15 +1948,56 @@ public partial class MainWindow : Window
         if (_appliedEdge is { } edge && edge != Models.DockEdge.Bottom) OrientAllIcons();
     }
 
+    private void ApplyNotchBrowser()
+    {
+        Browser.NotchBrowser.Animations = _preferences.Current.AnimationsEnabled;
+        Browser.NotchBrowser.SetEnabled(_preferences.Current.NotchBrowser);
+    }
+
     private void OnFullScreenChanged(bool suppressed)
     {
         _topBar?.SetSuppressed(suppressed);
+        Browser.NotchBrowser.Suppressed = suppressed;
         if (!suppressed) return;
         _widgetBar.ClosePopups();
         _previewCloseTimer.Stop();
         _thumbnailPreview.Hide();
         if (_openContextMenu is not null) _openContextMenu.IsOpen = false;
         ResetMagnification();
+    }
+
+    private string? _lastFitNote;
+    private double _dockFullCell, _dockChrome;
+
+    /// <summary>
+    /// When the row is too wide and the icons shrink, the dock gets lower with them (from the top), so no empty band
+    /// stands above the icons.
+    /// </summary>
+    private void FitDockHeight()
+    {
+        if (_dockFullCell <= 0 || Application.Current.Resources["DockTileSize"] is not double tile) return;
+        var cell = Math.Min(_dockFullCell, tile + Math.Round(13 * TaskbarReplacementSession.Scale));
+        if (Application.Current.Resources["DockCellHeight"] is double now && Math.Abs(now - cell) < 0.5) return;
+        Application.Current.Resources["DockCellHeight"] = cell;
+        DockSurface.Height = cell + _dockChrome;
+    }
+
+    /// <summary>
+    /// Widget tiles in the dock stand as tall as the dock allows (a narrow row shrinks them, but not their height),
+    /// so a full dock has no empty band above and below them.
+    /// </summary>
+    private void FillDockHeight()
+    {
+        var scale = _dockWidgetScale * (WidgetsInDock ? TaskbarReplacementSession.Scale : 1);
+        if (!WidgetsInDock || scale <= 0 || Application.Current.Resources["DockCellHeight"] is not double cell)
+        {
+            WidgetHost.Resources.Remove("WidgetTileHeight");
+            return;
+        }
+        var standard = (double)Application.Current.Resources["WidgetTileHeight"];
+        var tall = Math.Max(standard, Math.Round((cell - 10) * 0.75 / scale, 1));
+        if (WidgetHost.Resources["WidgetTileHeight"] is double now && Math.Abs(now - tall) < 0.5) return;
+        WidgetHost.Resources["WidgetTileHeight"] = tall;
     }
 
     private void ResizeDockToContent()
@@ -1966,6 +2030,13 @@ public partial class MainWindow : Window
             cellSize = Math.Min(fullCell, Math.Max(24, (availableWidth - frameWidth - statusWidth - widgetWidth) / count));
         }
         SetDockWidgetScale(widgetScale);
+        FillDockHeight();
+        var fitNote = $"{count}|{Math.Round(widgetWidth)}|{Math.Round(availableWidth)}|{widgetScale:0.00}|{cellSize:0.0}|{_tileSizeForHeight}";
+        if (fitNote != _lastFitNote)
+        {
+            _lastFitNote = fitNote;
+            Services.AppLog.Write("Dock sığdırma (simge|widget gen.|alan|widget ölçek|hücre|tam simge): " + fitNote);
+        }
         var previousCell = Application.Current.Resources["DockCellSize"] is double cell ? cell : double.NaN;
         if (Math.Abs(previousCell - cellSize) > 0.01)
         {
@@ -1974,6 +2045,8 @@ public partial class MainWindow : Window
             Application.Current.Resources["DockCellSize"] = cellSize;
             ApplyTileSize(Math.Max(20, Math.Min(_tileSizeForHeight, cellSize - 6)));
         }
+        FitDockHeight();
+        FillDockHeight();
         // A new tile size reaches the tiles through resources: lay them out first, or the row is measured at the old size.
         DockRow.InvalidateMeasure();
         UpdateLayout();

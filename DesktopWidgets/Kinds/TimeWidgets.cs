@@ -57,6 +57,24 @@ internal sealed class DigitalClockWidget : DeskWidget
                 grid.Children.Add(At(right, 0, 1));
                 return grid;
             }
+            case DeskSize.Tall:
+            {
+                // Upright: hours over minutes, large, the weather at the foot.
+                _day = T("", 14, FontWeights.SemiBold, Orange);
+                _time = Digits("", 78, FontWeights.SemiBold);
+                _time.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+                _time.LineHeight = 80;
+                _time.VerticalAlignment = VerticalAlignment.Center;
+                _date = T("", 12.5, brush: Secondary);
+                _weatherIcon = new ContentControl { Width = 26, Height = 26 };
+                _temp = T("", 17, FontWeights.SemiBold);
+                var grid = Grid("Auto,*,Auto,Auto");
+                grid.Children.Add(_day);
+                grid.Children.Add(At(_time, 1));
+                grid.Children.Add(At(_date, 2));
+                grid.Children.Add(At(Margin(Row(_weatherIcon, Margin(_temp, 6)), 0, 8), 3));
+                return grid;
+            }
             default:
             {
                 _day = T("", 14, FontWeights.SemiBold, Orange);
@@ -76,7 +94,7 @@ internal sealed class DigitalClockWidget : DeskWidget
 
     protected override void OnAttach()
     {
-        if (Size == DeskSize.Medium) WeatherHub.Instance.Subscribe(UpdateWeather);
+        if (Size is DeskSize.Medium or DeskSize.Tall) WeatherHub.Instance.Subscribe(UpdateWeather);
     }
 
     protected override void OnDetach() => WeatherHub.Instance.Unsubscribe(UpdateWeather);
@@ -86,7 +104,9 @@ internal sealed class DigitalClockWidget : DeskWidget
         var now = DateTime.Now;
         var culture = Desk.Culture;
         if (_time is not null)
-            _time.Text = now.ToString(ShowSeconds && Size is DeskSize.Strip or DeskSize.Mini ? "HH:mm:ss" : "HH:mm", culture);
+            _time.Text = Size == DeskSize.Tall
+                ? now.ToString("HH", culture) + "\n" + now.ToString("mm", culture)
+                : now.ToString(ShowSeconds && Size is DeskSize.Strip or DeskSize.Mini ? "HH:mm:ss" : "HH:mm", culture);
         if (Size == DeskSize.Mini && ShowSeconds && _time is not null) _time.FontSize = 26;
         if (_seconds is not null) _seconds.Text = now.ToString(":ss", culture);
         if (_day is not null) _day.Text = Size == DeskSize.Mini ? now.ToString("ddd", culture) : now.ToString("dddd", culture);
@@ -102,7 +122,7 @@ internal sealed class DigitalClockWidget : DeskWidget
         if (_weatherIcon.Tag as string != $"{report.Code}{report.IsDay}")
         {
             _weatherIcon.Tag = $"{report.Code}{report.IsDay}";
-            _weatherIcon.Content = WeatherArt.Create(report.Code, report.IsDay, 44);
+            _weatherIcon.Content = WeatherArt.Create(report.Code, report.IsDay, _weatherIcon.Width);
         }
     }
 
@@ -565,7 +585,7 @@ internal sealed class WorldClockDeskWidget : DeskWidget
 {
     private readonly List<(string Zone, TextBlock Time, TextBlock? Offset, AnalogFace? Face)> _cells = [];
 
-    public override TimeSpan? Interval => TimeSpan.FromSeconds(Size == DeskSize.Medium ? 1 : 20);
+    public override TimeSpan? Interval => TimeSpan.FromSeconds(Size is DeskSize.Medium or DeskSize.Tall ? 1 : 20);
 
     private static IEnumerable<(string Name, string Zone)> Cities()
     {
@@ -582,6 +602,24 @@ internal sealed class WorldClockDeskWidget : DeskWidget
     {
         _cells.Clear();
         var cities = Cities().ToList();
+        if (Size == DeskSize.Tall)
+        {
+            // Upright: one city per row, its clock face beside the time.
+            var column = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            foreach (var (name, zone) in cities)
+            {
+                var face = new AnalogFace { Width = 50, Height = 50, Light = true, Numbers = false };
+                var time = Digits("", 20);
+                var offset = T("", 10.5, brush: Secondary);
+                var row = Grid(columns: "Auto,*");
+                row.Children.Add(face);
+                row.Children.Add(At(Margin(Column(T(name, 12.5, FontWeights.SemiBold), time, offset), 10), 0, 1));
+                row.Margin = new Thickness(0, 7, 0, 7);
+                column.Children.Add(row);
+                _cells.Add((zone, time, offset, face));
+            }
+            return column;
+        }
         if (Size == DeskSize.Small)
         {
             var stack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };

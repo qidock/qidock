@@ -19,8 +19,7 @@ internal sealed class DeskWidgetWindow : Window, IDeskHost
 {
     public const double Shadow = 16;
     private readonly DeskWidgetManager _manager;
-    private readonly Border _card;
-    private readonly Border _shadow;
+    private readonly DeskCardFace _face = new();
     private readonly DispatcherTimer _timer = new(DispatcherPriority.Background);
     private NativePoint? _press;
     private double _pressLeft, _pressTop;
@@ -56,30 +55,17 @@ internal sealed class DeskWidgetWindow : Window, IDeskHost
         SetResourceReference(FontFamilyProperty, "InterfaceFont");
         TextOptions.SetTextFormattingMode(this, TextFormattingMode.Ideal);
 
-        // The shadow is a separate layer so content updates (a ticking clock) never re-render the blur.
-        _shadow = new Border
-        {
-            CornerRadius = new CornerRadius(24),
-            Background = DeskUi.CardFill,
-            Effect = new DropShadowEffect { Color = Colors.Black, BlurRadius = 24, ShadowDepth = 5, Direction = 270, Opacity = 0.38, RenderingBias = RenderingBias.Performance }
-        };
-        _card = new Border
-        {
-            CornerRadius = new CornerRadius(24),
-            Background = DeskUi.CardFill,
-            BorderBrush = DeskUi.CardStroke,
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(14)
-        };
-        _card.SizeChanged += (_, e) => _card.Clip = new RectangleGeometry(new Rect(e.NewSize), 24, 24);
-        var layers = new Grid { Margin = new Thickness(Shadow) };
-        layers.Children.Add(_shadow);
-        layers.Children.Add(_card);
-        Content = layers;
+        _face.Root.Margin = new Thickness(Shadow);
+        Content = _face.Root;
         ApplySize();
 
         Left = item.X - Shadow;
         Top = item.Y - Shadow;
+        // The glass shows the wallpaper behind the card, also while it is being dragged.
+        LocationChanged += (_, _) => PlaceGlass();
+        // Placed before the window had its place (Left/Top not set yet): place it again once it is on screen.
+        SourceInitialized += (_, _) => PlaceGlass();
+        IsVisibleChanged += (_, _) => { if (IsVisible) PlaceGlass(); };
 
         _timer.Tick += (_, _) => Widget.Tick();
         PreviewMouseLeftButtonDown += OnPress;
@@ -94,18 +80,46 @@ internal sealed class DeskWidgetWindow : Window, IDeskHost
         Rebuild();
     }
 
+    private bool _coverHooked;
+
+    /// <summary>A widget that paints the whole card (music with a cover) gets a card without glass under it.</summary>
+    private void CoverFace()
+    {
+        if (!_coverHooked)
+        {
+            _coverHooked = true;
+            Widget.CoversChanged += CoverFace;
+        }
+        if (_face.Covered == Widget.Covers) return;
+        _face.Covered = Widget.Covers;
+        _face.Apply();
+    }
+
     private void ApplySize()
     {
-        var size = Desk.Dimensions(Item.Size);
-        _card.Width = _shadow.Width = size.Width;
-        _card.Height = _shadow.Height = size.Height;
         // Strips are short; keep their content from touching the edges but use the height.
-        _card.Padding = Desk.Padding(Item.Size);
+        _face.SetSize(Desk.Dimensions(Item.Size), Desk.Padding(Item.Size), Widget.Bare);
+        PlaceGlass();
+    }
+
+    private void PlaceGlass()
+    {
+        if (double.IsNaN(Left) || double.IsNaN(Top)) return;
+        var size = Desk.Dimensions(Item.Size);
+        _face.Place(new Rect(Left + Shadow, Top + Shadow, size.Width, size.Height));
+    }
+
+    /// <summary>The wallpaper or the glass setting changed.</summary>
+    public void RefreshGlass()
+    {
+        _face.Apply();
+        PlaceGlass();
     }
 
     public void Rebuild()
     {
-        _card.Child = Widget.Build();
+        _face.Card.Child = Widget.Build();
+        CoverFace();
         if (IsLive) Widget.Tick();
     }
 
@@ -181,9 +195,25 @@ internal sealed class DeskWidgetWindow : Window, IDeskHost
             }
             menu.Items.Add(sizes);
         }
+        if (CanTurn)
+        {
+            // Lying (wide) or standing (tall): the widget turns in place and keeps its last wide size for the way back.
+            var turn = Entry("Yön", "Orientation", null);
+            var wide = new MenuItem { Header = Desk.L("Yatay", "Landscape"), IsChecked = Item.Size != DeskSize.Tall };
+            wide.Click += (_, _) => Turn(false);
+            var tall = new MenuItem { Header = Desk.L("Dikey", "Portrait"), IsChecked = Item.Size == DeskSize.Tall };
+            tall.Click += (_, _) => Turn(true);
+            turn.Items.Add(wide);
+            turn.Items.Add(tall);
+            menu.Items.Add(turn);
+        }
         var before = menu.Items.Count;
         Widget.AddMenuItems(menu);
         menu.Items.Add(new Separator());
+        var glass = Entry("Cam görünüm", "Glass look", null);
+        glass.IsChecked = _manager.Glass;
+        glass.Click += (_, _) => _manager.SetGlass(!_manager.Glass);
+        menu.Items.Add(glass);
         var add = Entry("Widget ekle…", "Add widget…", "IconPlus");
         add.Click += (_, _) => _manager.ShowGallery();
         menu.Items.Add(add);
@@ -192,6 +222,23 @@ internal sealed class DeskWidgetWindow : Window, IDeskHost
         remove.Click += (_, _) => _manager.Remove(this);
         menu.Items.Add(remove);
         menu.IsOpen = true;
+    }
+
+    private bool CanTurn => Kind.Sizes.Contains(DeskSize.Tall) && Kind.Sizes.Any(s => s is DeskSize.Strip or DeskSize.Medium or DeskSize.Large);
+
+    public void Turn(bool upright)
+    {
+        if (upright == (Item.Size == DeskSize.Tall)) return;
+        if (upright)
+        {
+            Item.Options["wide"] = Item.Size.ToString();
+            ChangeSize(DeskSize.Tall);
+            return;
+        }
+        var back = Item.Options.TryGetValue("wide", out var stored) && Enum.TryParse<DeskSize>(stored, out var size) && size != DeskSize.Tall && Kind.Sizes.Contains(size)
+            ? size
+            : Kind.Sizes.Contains(DeskSize.Medium) ? DeskSize.Medium : Kind.Sizes.Contains(DeskSize.Strip) ? DeskSize.Strip : Kind.DefaultSize;
+        ChangeSize(back);
     }
 
     private static MenuItem Entry(string tr, string en, string? icon)

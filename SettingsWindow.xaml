@@ -91,6 +91,16 @@
                                 <TextBlock Text="{local:Loc Previews}" Style="{StaticResource SettingsRowLabel}" />
                             </DockPanel></Border>
                             <Border Style="{StaticResource SettingsRow}"><DockPanel>
+                                <CheckBox x:Name="DockGlassToggle" DockPanel.Dock="Right" Style="{StaticResource SettingsSwitch}"
+                                          AutomationProperties.Name="{local:Loc DockGlassSetting}" AutomationProperties.HelpText="{local:Loc DockGlassSettingHelp}" />
+                                <TextBlock Text="{local:Loc DockGlassSetting}" Style="{StaticResource SettingsRowLabel}" ToolTip="{local:Loc DockGlassSettingHelp}" />
+                            </DockPanel></Border>
+                            <Border Style="{StaticResource SettingsRow}"><DockPanel>
+                                <CheckBox x:Name="NotchBrowserToggle" DockPanel.Dock="Right" Style="{StaticResource SettingsSwitch}"
+                                          AutomationProperties.Name="{local:Loc NotchBrowserSetting}" AutomationProperties.HelpText="{local:Loc NotchBrowserSettingHelp}" />
+                                <TextBlock Text="{local:Loc NotchBrowserSetting}" Style="{StaticResource SettingsRowLabel}" ToolTip="{local:Loc NotchBrowserSettingHelp}" />
+                            </DockPanel></Border>
+                            <Border Style="{StaticResource SettingsRow}"><DockPanel>
                                 <CheckBox x:Name="BadgesToggle" DockPanel.Dock="Right" Style="{StaticResource SettingsSwitch}"
                                           AutomationProperties.Name="{local:Loc Badges}" AutomationProperties.HelpText="{local:Loc BadgesDescription}" />
                                 <TextBlock Text="{local:Loc Badges}" Style="{StaticResource SettingsRowLabel}" />

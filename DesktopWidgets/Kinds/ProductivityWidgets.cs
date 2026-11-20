@@ -75,9 +75,9 @@ internal sealed class TodoDeskWidget : DeskWidget
     public override FrameworkElement Build()
     {
         var items = Items.Where(t => !t.Done).Concat(Items.Where(t => t.Done)).ToList();
-        var capacity = Size switch { DeskSize.Strip => 3, DeskSize.Small => 4, DeskSize.Medium => 3, _ => 10 };
-        var withHeader = Size is DeskSize.Small or DeskSize.Medium or DeskSize.Large;
-        var withInput = Size is DeskSize.Medium or DeskSize.Large || _adding;
+        var capacity = Size switch { DeskSize.Strip => 3, DeskSize.Small => 4, DeskSize.Medium => 3, DeskSize.Tall => 8, _ => 10 };
+        var withHeader = Size is DeskSize.Small or DeskSize.Medium or DeskSize.Large or DeskSize.Tall;
+        var withInput = Size is DeskSize.Medium or DeskSize.Large or DeskSize.Tall || _adding;
         if (_adding && Size is DeskSize.Strip or DeskSize.Small) capacity -= 1;
 
         var stack = new StackPanel();
@@ -296,6 +296,7 @@ internal sealed class CalendarDeskWidget : DeskWidget
             DeskSize.Strip => Week(),
             DeskSize.Small => Today(3, compact: true),
             DeskSize.Medium => TodayWide(),
+            DeskSize.Tall => TodayTall(),
             _ => Month()
         };
     }
@@ -387,6 +388,18 @@ internal sealed class CalendarDeskWidget : DeskWidget
         var upcoming = Upcoming(1);
         if (upcoming.Count == 0) stack.Children.Add(NoEvents());
         else stack.Children.Add(EventRow(upcoming[0], 0, true));
+        return stack;
+    }
+
+    /// <summary>Upright: today's page on top, the coming events below.</summary>
+    private static FrameworkElement TodayTall()
+    {
+        var stack = (StackPanel)Today(0, compact: false);
+        stack.VerticalAlignment = VerticalAlignment.Top;
+        stack.Children.Add(new Border { Height = 1, Background = Track, Margin = new Thickness(0, 10, 0, 10) });
+        var upcoming = Upcoming(4);
+        if (upcoming.Count == 0) stack.Children.Add(NoEvents());
+        for (var i = 0; i < upcoming.Count; i++) stack.Children.Add(EventRow(upcoming[i], i, true));
         return stack;
     }
 

@@ -17,6 +17,8 @@ internal sealed class MetricWidget(Metric metric) : DeskWidget
     private Border? _barFill;
     private Grid? _bar;
     private ContentControl? _icon;
+    private StackPanel? _top;
+    private DateTime _lastTop;
 
     private Brush Color => metric switch
     {
@@ -80,6 +82,34 @@ internal sealed class MetricWidget(Metric metric) : DeskWidget
                 grid.Children.Add(At(_detail, 2));
                 return grid;
             }
+            case DeskSize.Tall:
+            {
+                // Upright: the load now and over the last minutes, then what is using it, program by program.
+                var header = Grid(columns: "Auto,*,Auto");
+                header.Children.Add(_icon);
+                header.Children.Add(At(Margin(T(Label, 13, FontWeights.SemiBold), 6), 0, 1));
+                _value.FontSize = 20;
+                header.Children.Add(At(_value, 0, 2));
+                // Scaled to its own peak so small changes still show; the number gives the real figure.
+                _graph = new Sparkline { Stroke = Color, Height = 50, Margin = new Thickness(0, 10, 0, 0) };
+                var heading = T(Desk.L("En çok kullananlar", "Using it most"), 11, FontWeights.SemiBold, Secondary);
+                heading.Margin = new Thickness(0, 12, 0, 4);
+                _top = new StackPanel { VerticalAlignment = VerticalAlignment.Top };
+                _top.Children.Add(T(Desk.L("Ölçülüyor…", "Measuring…"), 12, brush: Secondary));
+                _lastTop = default;
+                var footer = Grid(columns: "*,Auto");
+                footer.Children.Add(T(Desk.L($"{Environment.ProcessorCount} çekirdek", $"{Environment.ProcessorCount} cores"), 10.5, FontWeights.SemiBold, Tertiary));
+                _detail.FontSize = 10.5;
+                _detail.Foreground = Tertiary;
+                footer.Children.Add(At(_detail, 0, 1));
+                var grid = Grid("Auto,Auto,Auto,*,Auto");
+                grid.Children.Add(header);
+                grid.Children.Add(At(_graph, 1));
+                grid.Children.Add(At(heading, 2));
+                grid.Children.Add(At(_top, 3));
+                grid.Children.Add(At(footer, 4));
+                return grid;
+            }
             default:
             {
                 var header = Grid(columns: "Auto,*,Auto");
@@ -107,6 +137,50 @@ internal sealed class MetricWidget(Metric metric) : DeskWidget
         }
     }
 
+    /// <summary>The busiest programs, with their icons; the first reading only sets the baseline.</summary>
+    private void ShowTop()
+    {
+        if (_top is null) return;
+        _lastTop = DateTime.UtcNow;
+        var all = QiDock.Services.Widgets.CpuTop.Sample(6);
+        if (all.Count == 0) return;
+        // Programs that round to nothing only fill the list; three rows always stay.
+        var users = all.Where((u, i) => i < 3 || u.Percent >= 0.5).ToList();
+        _top.Children.Clear();
+        foreach (var user in users)
+        {
+            FrameworkElement icon = user.Path is { } path && QiDock.Services.ApplicationIconProvider.GetForFile(path) is { } picture
+                ? new System.Windows.Controls.Image { Source = picture }
+                : Letter(user.Name);
+            icon.Width = icon.Height = 18;
+            icon.VerticalAlignment = VerticalAlignment.Center;
+            var name = T(user.Name, 12, FontWeights.SemiBold);
+            name.Margin = new Thickness(8, 0, 6, 0);
+            var share = Digits(Percent(user.Percent), 12, FontWeights.SemiBold, user.Percent >= 25 ? Orange : Secondary);
+            var row = Grid(columns: "Auto,*,Auto");
+            row.Height = 25;
+            row.Children.Add(icon);
+            row.Children.Add(At(name, 0, 1));
+            row.Children.Add(At(share, 0, 2));
+            row.ToolTip = $"{user.Name}: {Percent(user.Percent)}";
+            _top.Children.Add(row);
+        }
+    }
+
+    /// <summary>A small tile with the program's first letter, for programs without an icon of their own.</summary>
+    private static FrameworkElement Letter(string name)
+    {
+        var letter = T(name.Length > 0 ? name[..1].ToUpperInvariant() : "?", 10.5, FontWeights.Bold, Text);
+        letter.HorizontalAlignment = HorizontalAlignment.Center;
+        return new Border { CornerRadius = new CornerRadius(5), Background = Inset, Child = letter };
+    }
+
+    public override void AddMenuItems(ItemsControl menu)
+    {
+        if (metric == Metric.Cpu)
+            menu.Items.Add(MenuEntry(Desk.L("Görev Yöneticisini aç", "Open Task Manager"), () => QiDock.Widgets.Ui.Open("taskmgr.exe")));
+    }
+
     protected override void OnAttach() => SystemHub.Instance.Subscribe(Tick);
     protected override void OnDetach() => SystemHub.Instance.Unsubscribe(Tick);
 
@@ -120,7 +194,9 @@ internal sealed class MetricWidget(Metric metric) : DeskWidget
             case Metric.Cpu:
                 percent = hub.Cpu;
                 var uptime = TimeSpan.FromMilliseconds(Environment.TickCount64);
-                detail = Size == DeskSize.Small
+                detail = Size == DeskSize.Tall
+                    ? Desk.L($"açık {(int)uptime.TotalDays} g {uptime.Hours} sa", $"up {(int)uptime.TotalDays} d {uptime.Hours} h")
+                    : Size == DeskSize.Small
                     ? Desk.L($"{Environment.ProcessorCount} çekirdek", $"{Environment.ProcessorCount} cores")
                     : Desk.L($"{Environment.ProcessorCount} çekirdek · açık {(int)uptime.TotalDays} g {uptime.Hours} sa", $"{Environment.ProcessorCount} cores · up {(int)uptime.TotalDays} d {uptime.Hours} h");
                 break;
@@ -151,6 +227,7 @@ internal sealed class MetricWidget(Metric metric) : DeskWidget
         if (Size != DeskSize.Mini) _value.Foreground = Size == DeskSize.Small ? Text : QiDock.Widgets.Ui.UsageBrush(metric == Metric.Battery ? 100 - percent : percent);
         _detail!.Text = detail;
         _graph?.SetValues([.. hub.CpuHistory]);
+        if (_top is not null && DateTime.UtcNow - _lastTop >= TimeSpan.FromSeconds(3)) ShowTop();
         if (_bar is not null && _barFill is not null)
             _barFill.Width = Math.Max(8, (_bar.ActualWidth > 0 ? _bar.ActualWidth : 312) * percent / 100);
     }

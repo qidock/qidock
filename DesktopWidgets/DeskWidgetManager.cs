@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Threading;
+using QiDock.Services.Widgets;
 
 namespace QiDock.DesktopWidgets;
 
@@ -13,6 +14,8 @@ internal sealed class DeskWidgetManager : IDisposable
     private readonly List<DeskWidgetWindow> _windows = [];
     private readonly DispatcherTimer _saveTimer = new(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(400) };
     private readonly DispatcherTimer _recreateTimer = new(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(3) };
+    // Windows writes the new wallpaper file a moment after it says the desktop changed.
+    private readonly DispatcherTimer _wallpaperTimer = new(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1.5) };
     private IReadOnlyList<Rect> _covers = [];
     private DeskGallery? _gallery;
     private bool _disposed;
@@ -30,6 +33,40 @@ internal sealed class DeskWidgetManager : IDisposable
             _recreateTimer.Stop();
             Reopen();
         };
+        _wallpaperTimer.Tick += (_, _) =>
+        {
+            _wallpaperTimer.Stop();
+            CheckWallpaper();
+        };
+    }
+
+    private int _glassVersion = -1;
+
+    public bool Glass => _layout.Glass;
+
+    public void SetGlass(bool glass)
+    {
+        _layout.Glass = glass;
+        DeskCardFace.GlassEnabled = glass;
+        foreach (var window in _windows) window.RefreshGlass();
+        Save();
+    }
+
+    private void CheckWallpaper()
+    {
+        if (_disposed) return;
+        WallpaperGlass.Refresh();
+        // Compared with what the cards show, not with Refresh's answer: the dock may have read the new picture first.
+        if (WallpaperGlass.Version == _glassVersion) return;
+        _glassVersion = WallpaperGlass.Version;
+        foreach (var window in _windows) window.RefreshGlass();
+    }
+
+    private void OnPreferenceChanged(object? sender, Microsoft.Win32.UserPreferenceChangedEventArgs e)
+    {
+        if (e.Category != Microsoft.Win32.UserPreferenceCategory.Desktop) return;
+        _wallpaperTimer.Stop();
+        _wallpaperTimer.Start();
     }
 
     public IReadOnlyList<DeskItem> Items => _layout.Items;
@@ -42,6 +79,9 @@ internal sealed class DeskWidgetManager : IDisposable
             _layout.Initialized = true;
             Save();
         }
+        DeskCardFace.GlassEnabled = _layout.Glass;
+        WallpaperGlass.Refresh();
+        Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnPreferenceChanged;
         foreach (var item in _layout.Items.ToList()) Open(item);
     }
 
@@ -142,6 +182,8 @@ internal sealed class DeskWidgetManager : IDisposable
                 window.SetLive(IsUncovered(window));
             }
         }
+        // A slideshow may have moved on while they were away.
+        if (!hidden) CheckWallpaper();
     }
 
     private bool IsUncovered(DeskWidgetWindow window)
@@ -251,8 +293,10 @@ internal sealed class DeskWidgetManager : IDisposable
     public void Dispose()
     {
         _disposed = true;
+        Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnPreferenceChanged;
         _saveTimer.Stop();
         _recreateTimer.Stop();
+        _wallpaperTimer.Stop();
         DeskStore.Save(_layout);
         _gallery?.Close();
         foreach (var window in _windows.ToList())

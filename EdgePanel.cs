@@ -470,6 +470,7 @@ public abstract class EdgePanel : Window
             return;
         }
         _shape.Visibility = _outline.Visibility = Visibility.Collapsed;
+        Services.Widgets.GlassLook.Tiles(Resources, false); // the glass tiles belong to the card on the dock
         _sheet.Margin = new Thickness(0);
         _sheet.Clip = null;
         var area = SystemParameters.WorkArea;
@@ -515,8 +516,26 @@ public abstract class EdgePanel : Window
     }
 
     /// <summary>The panel rises out of the tile: a small bump on the dock swells into the full panel.</summary>
+    private bool _glassHooked;
+
+    /// <summary>The card on the dock keeps its glass in place while it moves, grows or the dock's glass changes.</summary>
+    private void HookDockGlass()
+    {
+        if (_glassHooked) return;
+        _glassHooked = true;
+        void Repaint()
+        {
+            if (ReferenceEquals(_onDock, this) && Services.Widgets.GlassLook.DockVeil is not null) PaintDockShape();
+        }
+        LocationChanged += (_, _) => Repaint();
+        SizeChanged += (_, _) => Repaint();
+        Services.Widgets.GlassLook.DockChanged += Repaint;
+        Closed += (_, _) => Services.Widgets.GlassLook.DockChanged -= Repaint;
+    }
+
     private void OpenFromDock(DockAnchor dock)
     {
+        HookDockGlass();
         var area = SystemParameters.WorkArea;
         var top = area.Top + Math.Max(0, TopInset());
         var side = Fillet + Slack;
@@ -587,6 +606,14 @@ public abstract class EdgePanel : Window
     /// <summary>The dock's material for the shape (its gradient turned over so the colours meet at the seam) and its edge.</summary>
     private void PaintDockShape()
     {
+        var dockGlass = DockGlass();
+        Services.Widgets.GlassLook.Tiles(Resources, dockGlass is not null);
+        if (dockGlass is { } glass)
+        {
+            _shape.Fill = glass;
+            _outline.Stroke = Services.Widgets.GlassLook.Rim;
+            return;
+        }
         if (TryFindResource("DockMaterial") is GradientBrush { GradientStops.Count: > 0 } dock)
         {
             var stops = dock.GradientStops.OrderBy(stop => stop.Offset).ToList();
@@ -600,6 +627,22 @@ public abstract class EdgePanel : Window
         if (TryFindResource("DockBorderMaterial") is GradientBrush { GradientStops.Count: > 0 } edge)
             _outline.Stroke = new SolidColorBrush(edge.GradientStops.OrderBy(stop => stop.Offset).First().Color);
         else _outline.SetResourceReference(System.Windows.Shapes.Shape.StrokeProperty, "DockBorderMaterial");
+    }
+
+    /// <summary>
+    /// The dock's glass for the grown shape: the wallpaper behind this window under the dock's own veil, so card and
+    /// dock read as one piece of glass. Drawn in window coordinates and turned into the frame's (the shape is drawn as
+    /// if the dock were at the bottom). Null when the dock is not glass.
+    /// </summary>
+    private Brush? DockGlass()
+    {
+        if (Services.Widgets.GlassLook.DockVeil is null || _frameSize.Width <= 0 || _frameSize.Height <= 0) return null;
+        var o = ToWindow(new Point(0, 0));
+        var x = ToWindow(new Point(1, 0));
+        var y = ToWindow(new Point(0, 1));
+        var toScreen = new Matrix(x.X - o.X, x.Y - o.Y, y.X - o.X, y.Y - o.Y, o.X, o.Y);
+        toScreen.Translate(Left, Top);
+        return Services.Widgets.GlassLook.Dock(toScreen);
     }
 
     private void Morph(double to, double milliseconds, IEasingFunction ease, double delay = 0, Action? done = null)
@@ -811,6 +854,8 @@ public abstract class EdgePanel : Window
         var width = CardWidth + 2 * Pad;
         if (dock.Edge is Models.DockEdge.Left or Models.DockEdge.Right) PlaceOnDock(dock, contentHeight, width);
         else PlaceOnDock(dock, width, contentHeight);
+        // The card grew or shrank: its glass is placed again for the new shape.
+        if (ReferenceEquals(_onDock, this) && Services.Widgets.GlassLook.DockVeil is not null) PaintDockShape();
     }
 
     private void StartTicking()

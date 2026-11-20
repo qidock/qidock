@@ -52,6 +52,14 @@ public partial class App : Application
             DesktopWidgets.DeskSheet.Render(sheet, () => Preferences.Current.WidgetOptions, () => Shutdown());
             return;
         }
+        if (e.Args is ["--render-apps", var appsPicture])
+        {
+            // The app screen as the low-memory (software) drawing shows it, saved as a picture at the screen's scale.
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            System.Windows.Media.RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
+            AppGridWindow.RenderTo(appsPicture, () => Shutdown());
+            return;
+        }
         if (e.Args is ["--snapshot-dock", var snapshots]) DockSnapshotFolder = snapshots;
         if (e.Args is ["--snapshot-cycle", var cycle]) { DockSnapshotFolder = cycle; DockCycle = true; }
         if (e.Args is ["--claude-activity", var report])
@@ -289,7 +297,17 @@ public partial class App : Application
             try { using var old = Process.GetProcessById(previousId); old.WaitForExit(15000); }
             catch (ArgumentException) { } // already gone
         }
+        string? filesRequest = e.Args is ["--files", .. var filesArgs] ? (filesArgs.Length > 0 ? filesArgs[0] : "") : null;
         _instanceMutex = new Mutex(initiallyOwned: true, name: "Local\\QiDock.Singleton", out var createdNew);
+        if (!createdNew && filesRequest is not null)
+        {
+            // "QiDock.exe --files [folder]" while QiDock runs: the running copy opens its Files window.
+            Files.FilesLauncher.Signal(filesRequest);
+            _instanceMutex.Dispose();
+            _instanceMutex = null;
+            Shutdown();
+            return;
+        }
         if (!createdNew)
         {
             MessageBox.Show(UiText.Get("AlreadyRunning"), "QiDock", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -340,6 +358,9 @@ public partial class App : Application
         MainWindow = window;
         AppLog.Write($"Başladı (önceki ana pencere: {firstWindow}, kendiliğinden atanan: {assigned})");
         window.Show();
+        Files.FilesLauncher.Listen(Dispatcher);
+        if (filesRequest is not null)
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle, () => Files.FilesWindow.Open(filesRequest.Length > 0 ? filesRequest : null));
     }
 
     /// <summary>Whether this run draws on the processor (low-memory mode was on at start).</summary>

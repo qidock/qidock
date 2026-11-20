@@ -20,7 +20,7 @@ public partial class MainWindow
     // Alt+Shift+Space: QuickSearch · Ctrl+Alt+↑: Window Overview · Ctrl+Alt+↓: AppGrid ·
     // Ctrl+Alt+←: notification center · Ctrl+Alt+→: control center.
     // (Alt+Space and Ctrl+Alt+Space are usually taken by other apps' quick launchers.)
-    private const int HotkeyQuickSearch = 0xB001, HotkeyWindowOverview = 0xB002, HotkeyAppGrid = 0xB003, HotkeyNotifications = 0xB004, HotkeyControlCenter = 0xB005, HotkeyProfileFirst = 0xB011;
+    private const int HotkeyQuickSearch = 0xB001, HotkeyWindowOverview = 0xB002, HotkeyAppGrid = 0xB003, HotkeyNotifications = 0xB004, HotkeyControlCenter = 0xB005, HotkeyFiles = 0xB006, HotkeyDockKeys = 0xB007, HotkeyProfileFirst = 0xB011;
     private static readonly TimeSpan IdleBeforeTrim = TimeSpan.FromMinutes(2);
 
     private readonly DispatcherTimer _fullScreenWatch = new(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1) };
@@ -39,6 +39,12 @@ public partial class MainWindow
         RegisterHotKey(_extrasHandle, HotkeyAppGrid, ModControl | ModAlt | ModNoRepeat, 0x28 /* Down */);
         RegisterHotKey(_extrasHandle, HotkeyNotifications, ModControl | ModAlt | ModNoRepeat, 0x25 /* Left */);
         RegisterHotKey(_extrasHandle, HotkeyControlCenter, ModControl | ModAlt | ModNoRepeat, 0x27 /* Right */);
+        // Alt+Shift+E: the Files window (Ctrl+Alt+E would type € on Turkish keyboards).
+        RegisterHotKey(_extrasHandle, HotkeyFiles, ModAlt | ModShift | ModNoRepeat, 0x45 /* E */);
+        // Alt+Shift+D: the keyboard on the dock.
+        RegisterHotKey(_extrasHandle, HotkeyDockKeys, ModAlt | ModShift | ModNoRepeat, 0x44 /* D */);
+        PreviewKeyDown += (_, e) => { if (OnDockKey(e)) e.Handled = true; };
+        Deactivated += (_, _) => EndDockKeyboard(restore: false);
         // Ctrl+Alt+Shift+1…9: widget profiles (Ctrl+Alt alone is AltGr, which types # $ { [ on Turkish keyboards).
         for (var i = 0; i < 9; i++)
             RegisterHotKey(_extrasHandle, HotkeyProfileFirst + i, ModControl | ModAlt | ModShift | ModNoRepeat, (uint)(0x31 + i));
@@ -55,6 +61,7 @@ public partial class MainWindow
             AppGridWindow.Prewarm();
         };
         prewarm.Start();
+        StartDailyUpdateCheck();
         _fullScreenWatch.Tick += (_, _) => UpdateFullScreenAwareness(GetForegroundWindow());
         _fullScreenWatch.Start();
         _memoryTrim.Tick += (_, _) => TrimMemoryWhenIdle();
@@ -80,12 +87,14 @@ public partial class MainWindow
             case HotkeyAppGrid: AppGridWindow.Toggle(); break;
             case HotkeyNotifications: NotificationCenter.Shared.Toggle(); break;
             case HotkeyControlCenter: ControlCenter.Shared.Toggle(); break;
+            case HotkeyFiles: Files.FilesWindow.Open(); break;
+            case HotkeyDockKeys: BeginDockKeyboard(); break;
             case >= HotkeyProfileFirst and < HotkeyProfileFirst + 9:
                 var options = _preferences.Current.WidgetOptions;
                 var index = (int)wParam - HotkeyProfileFirst;
                 if (index >= options.EffectiveProfiles.Count) return 0;
                 if (index != options.EffectiveActiveProfile) SaveWidgetOptions(options.SwitchProfile(index));
-                Widgets.Ui.ShowHud("IconLayout", options.EffectiveProfiles[index].Name);
+                Widgets.Ui.ShowHud("IconPerson", options.EffectiveProfiles[index].Name);
                 break;
             default: return 0;
         }
@@ -106,6 +115,8 @@ public partial class MainWindow
             UnregisterHotKey(_extrasHandle, HotkeyAppGrid);
             UnregisterHotKey(_extrasHandle, HotkeyNotifications);
             UnregisterHotKey(_extrasHandle, HotkeyControlCenter);
+            UnregisterHotKey(_extrasHandle, HotkeyFiles);
+            UnregisterHotKey(_extrasHandle, HotkeyDockKeys);
             for (var i = 0; i < 9; i++) UnregisterHotKey(_extrasHandle, HotkeyProfileFirst + i);
         }
         // Never leave a window off the screen when QiDock closes.

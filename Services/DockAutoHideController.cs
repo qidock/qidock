@@ -111,10 +111,25 @@ public sealed class DockAutoHideController : IDisposable
         EvaluateState();
     }
 
+    /// <summary>The window in front reaches behind the dock (the dock's glass then turns plain grey).</summary>
+    public bool WindowBehind { get; private set; }
+
+    public event Action? WindowBehindChanged;
+
     public void CheckForegroundWindow(nint foregroundHwnd)
     {
+        // QiDock's own windows (the app grid, cards, menus) come and go over the dock: the window behind it is still
+        // the one that was there, so the dock's glass does not flash between grey and the wallpaper.
+        GetWindowThreadProcessId(foregroundHwnd, out var process);
+        var own = process == (uint)Environment.ProcessId;
+        var behind = own ? WindowBehind : EvaluateWindowOverlap(foregroundHwnd);
+        if (behind != WindowBehind)
+        {
+            WindowBehind = behind;
+            WindowBehindChanged?.Invoke();
+        }
         if (Mode != AutoHideMode.Smart) return;
-        HasOverlap = EvaluateWindowOverlap(foregroundHwnd);
+        HasOverlap = behind;
         EvaluateState();
     }
 
@@ -210,13 +225,14 @@ public sealed class DockAutoHideController : IDisposable
 
         if (GetWindowRect(hwnd, out var winRect) && GetWindowRect(_windowHandle, out var dockRect))
         {
-            // The dock window's inner 16 px are headroom, not dock: a window may reach into them.
+            // The dock window's inner part is headroom (room for grown icons), not dock: a window may reach into it.
+            var headroom = (int)Math.Round(TaskbarReplacementSession.DockHeadroomDips * GetDpiForWindow(_windowHandle) / 96d);
             switch (DockGeometry.Edge)
             {
-                case Models.DockEdge.Top: dockRect.Bottom -= 16; break;
-                case Models.DockEdge.Left: dockRect.Right -= 16; break;
-                case Models.DockEdge.Right: dockRect.Left += 16; break;
-                default: dockRect.Top += 16; break;
+                case Models.DockEdge.Top: dockRect.Bottom -= headroom; break;
+                case Models.DockEdge.Left: dockRect.Right -= headroom; break;
+                case Models.DockEdge.Right: dockRect.Left += headroom; break;
+                default: dockRect.Top += headroom; break;
             }
             return winRect.Left < dockRect.Right
                 && winRect.Right > dockRect.Left
@@ -252,6 +268,12 @@ public sealed class DockAutoHideController : IDisposable
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsZoomed(nint hWnd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(nint hWnd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(nint hWnd, out uint processId);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

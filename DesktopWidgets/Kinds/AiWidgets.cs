@@ -13,14 +13,17 @@ namespace QiDock.DesktopWidgets.Kinds;
 
 /// <summary>An AI assistant on the desktop: its app (icon, name, colour) and, when known, its usage provider.</summary>
 /// <param name="Plate">A light tile drawn behind an icon that is dark itself (Codex's black knot).</param>
-internal sealed record AiAssistant(string Name, string AppId, string? UsageProvider, Color From, Color To, bool Plate = false)
+/// <param name="Windows">How many limits the large tile lists (OpenCode Go has three: 5 hours, week, month).</param>
+internal sealed record AiAssistant(string Name, string AppId, string? UsageProvider, Color From, Color To, bool Plate = false, int Windows = 2)
 {
     public static readonly AiAssistant Claude = new("Claude", "Claude_pzs8sxrjxfjjc!Claude", AiUsageService.ClaudeId,
         Color.FromRgb(0xE0, 0x86, 0x5F), Color.FromRgb(0xC1, 0x5F, 0x3C));
     public static readonly AiAssistant Codex = new("Codex", "OpenAI.Codex_2p2nqsd0c76g0!App", AiUsageService.CodexId,
         Color.FromRgb(0x5B, 0x8C, 0xFF), Color.FromRgb(0x2F, 0x5B, 0xD8), Plate: true);
-    public static readonly AiAssistant Gemini = new("Gemini", "com.google.gemini.windows", null,
+    public static readonly AiAssistant Gemini = new("Gemini", "com.google.gemini.windows", AiUsageService.GeminiId,
         Color.FromRgb(0x4F, 0x9B, 0xF5), Color.FromRgb(0xA4, 0x6B, 0xE8));
+    public static readonly AiAssistant OpenCode = new("OpenCode", "ai.opencode.desktop", AiUsageService.OpenCodeId,
+        Color.FromRgb(0x9A, 0xA3, 0xB5), Color.FromRgb(0x5E, 0x67, 0x7A), Windows: 3);
 
     public Brush Accent => new SolidColorBrush(From);
 
@@ -46,7 +49,7 @@ internal sealed record AiAssistant(string Name, string AppId, string? UsageProvi
 }
 
 /// <summary>
-/// Claude and Codex usage shared by every AI widget on the desktop: read once, every two minutes, only while one of
+/// Claude, Codex, Gemini and OpenCode usage shared by every AI widget on the desktop: read once, every two minutes, only while one of
 /// them is visible.
 /// </summary>
 internal sealed class AiUsageHub
@@ -106,7 +109,7 @@ internal sealed class AiUsageHub
 
 /// <summary>
 /// One AI assistant on the desktop with its own icon and colour. Claude and Codex show how much of their usage limits
-/// is spent and when it resets; Gemini (which keeps no usage on this PC) opens the app. The icon opens the app.
+/// is spent and when it resets (Gemini through Antigravity, OpenCode Go through its console). The icon opens the app.
 /// </summary>
 internal sealed class AiAssistantWidget(AiAssistant assistant) : DeskWidget
 {
@@ -200,14 +203,50 @@ internal sealed class AiAssistantWidget(AiAssistant assistant) : DeskWidget
                 grid.Children.Add(At(UsageRow(), 0, 3));
                 return grid;
             }
+            case DeskSize.Tall:
+            {
+                // Upright: icon and name, the first limit as a large ring, then every limit with its reset time.
+                var header = Grid(columns: "Auto,*");
+                header.Children.Add(AppIcon(30));
+                header.Children.Add(At(Margin(Column(Name(14), _status), 9), 0, 1));
+                _ring = new RingGauge { Width = 104, Height = 104, Thickness = 10, Stroke = assistant.Accent };
+                _headline = Digits("", 26, FontWeights.Bold);
+                _headline.HorizontalAlignment = HorizontalAlignment.Center;
+                var ring = new Grid { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                ring.Children.Add(_ring);
+                ring.Children.Add(_headline);
+                var rows = Column(UsageRow());
+                for (var extra = 1; extra < assistant.Windows; extra++) rows.Children.Add(Margin(UsageRow(), 0, 9));
+                var grid = Grid("Auto,*,Auto");
+                grid.Children.Add(header);
+                grid.Children.Add(At(ring, 1));
+                grid.Children.Add(At(rows, 2));
+                return grid;
+            }
             default:
             {
-                var header = Grid(columns: "Auto,*");
-                header.Children.Add(AppIcon(34));
-                header.Children.Add(At(Margin(Column(Name(15), _status), 10), 0, 1));
                 var grid = Grid("Auto,*");
-                grid.Children.Add(header);
-                var rows = Column(UsageRow(), Margin(UsageRow(), 0, 12));
+                if (assistant.Windows > 2)
+                {
+                    // Three limits: a one-line header (icon, name, plan) leaves room for the third row.
+                    var line = Grid(columns: "Auto,Auto,*");
+                    line.Children.Add(AppIcon(26));
+                    var name = Name(14);
+                    name.VerticalAlignment = VerticalAlignment.Center;
+                    line.Children.Add(At(Margin(name, 9), 0, 1));
+                    _status.VerticalAlignment = VerticalAlignment.Center;
+                    line.Children.Add(At(Margin(_status, 8), 0, 2));
+                    grid.Children.Add(line);
+                }
+                else
+                {
+                    var header = Grid(columns: "Auto,*");
+                    header.Children.Add(AppIcon(34));
+                    header.Children.Add(At(Margin(Column(Name(15), _status), 10), 0, 1));
+                    grid.Children.Add(header);
+                }
+                var rows = Column(UsageRow(), Margin(UsageRow(), 0, assistant.Windows > 2 ? 7 : 12));
+                for (var extra = 2; extra < assistant.Windows; extra++) rows.Children.Add(Margin(UsageRow(), 0, 7));
                 rows.VerticalAlignment = VerticalAlignment.Bottom;
                 grid.Children.Add(At(rows, 1));
                 return grid;
@@ -253,7 +292,7 @@ internal sealed class AiAssistantWidget(AiAssistant assistant) : DeskWidget
         if (!HasUsage) return;
         var hub = AiUsageHub.Instance;
         var usage = hub.For(assistant.UsageProvider!);
-        var windows = usage?.Windows.Take(2).ToList() ?? [];
+        var windows = usage?.Windows.Take(Math.Max(2, _rows.Count)).ToList() ?? [];
         var status = usage switch
         {
             null when !hub.Loaded => Desk.L("Okunuyor…", "Loading…"),
@@ -274,7 +313,7 @@ internal sealed class AiAssistantWidget(AiAssistant assistant) : DeskWidget
         {
             var (label, value, fill, bar, reset) = _rows[i];
             var window = i < windows.Count ? windows[i] : null;
-            label.Text = window?.Label ?? (i == 0 ? UiText.Get("AiSession") : UiText.Get("AiWeekly"));
+            label.Text = window?.Label ?? (i == 0 ? UiText.Get("AiSession") : i == 1 ? UiText.Get("AiWeekly") : UiText.Get("AiMonthly"));
             value.Text = window is null ? "—" : Percent(window.UsedPercent);
             value.Foreground = window is { UsedPercent: >= 85 } ? Red : window is { UsedPercent: >= 70 } ? Orange : Text;
             var width = bar.ActualWidth > 0 ? bar.ActualWidth : 0;

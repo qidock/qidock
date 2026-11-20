@@ -44,9 +44,11 @@ public sealed class TaskbarReplacementSession : IDisposable
     private bool _disposed;
     private bool _fullScreenSuppressed;
     private double _nativeTaskbarHeight = 66;
-    private const double DockHeadroomDips = 44;
+    /// <summary>The dock's size (1 = normal, 1.3 = 30% larger), from the preferences.</summary>
+    public static double Scale { get; set; } = 1;
+    internal static double DockHeadroomDips => Math.Round(44 * Scale);
     /// <summary>Height of the dock strip (bar + gap), taller than Windows' own 48 DIP taskbar.</summary>
-    public const double DockHeightDips = 64;
+    public static double DockHeightDips => Math.Round(64 * Scale);
     private Rect _reservedRect;
     private bool _hasReservation;
     private bool _autoHideEnabled;

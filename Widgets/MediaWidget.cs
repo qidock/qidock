@@ -254,6 +254,8 @@ public sealed partial class MediaWidget : DockWidget
             await LoadArtworkAsync(properties?.Thumbnail, version, newSong);
             if (version != _refreshVersion) return;
             if (newSong) RefreshAgainSoon();
+            Remember(title, artist, _art.Source);
+            _idle = false;
             SetVisible(true);
             UpdateProgressTimer();
             if (CardOpen) FillCard();
@@ -318,12 +320,13 @@ public sealed partial class MediaWidget : DockWidget
     }
 
     /// <summary>
-    /// Nothing playing: the tile stays (it used to vanish, and then it could be found neither in the dock nor in
-    /// the add list) and says so; its play button sends the keyboard's play key, which resumes the last player.
+    /// Nothing playing: the tile leaves the dock (it comes back with the next song). While the dock is being edited it
+    /// stays, so it can still be moved or removed; its play button sends the keyboard's play key.
     /// </summary>
     private void ShowIdle()
     {
         _playing = false;
+        _idle = true;
         _thumbnailKey = null;
         _artSignature = null;
         _art.Source = null;
@@ -334,7 +337,8 @@ public sealed partial class MediaWidget : DockWidget
         _tile.ToolTip = UiText.Get("MediaIdleHint");
         _playPause.Content = Ui.Glyph("GlyphPlay", 11);
         _previous.IsEnabled = _next.IsEnabled = false;
-        SetVisible(true);
+        // Nothing playing: no tile (it comes back with the next song); an open card keeps it until it closes.
+        SetVisible(CardOpen || _editing);
         UpdateProgressTimer();
         if (CardOpen) FillCard();
     }
@@ -359,6 +363,15 @@ public sealed partial class MediaWidget : DockWidget
         {
             System.Diagnostics.Trace.TraceWarning("Media command failed: {0}", ex.Message);
         }
+    }
+
+    private bool _idle;
+    private bool _editing;
+
+    public override void SetEditing(bool editing)
+    {
+        _editing = editing;
+        if (_idle) SetVisible(editing || CardOpen);
     }
 
     private void SetVisible(bool visible)

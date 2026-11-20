@@ -15,6 +15,9 @@ internal sealed class MusicWidget : DeskWidget
     private Grid? _progress;
     private DeskButton? _play;
     private string? _shownKey;
+    private bool _covers;
+
+    public override bool Covers => _covers;
 
     public override TimeSpan? Interval => TimeSpan.FromSeconds(1);
 
@@ -22,7 +25,14 @@ internal sealed class MusicWidget : DeskWidget
     {
         _shownKey = null;
         var padding = Desk.Padding(Size);
-        _root = new Border { Margin = new Thickness(-padding.Left, -padding.Top, -padding.Right, -padding.Bottom), Padding = padding };
+        // The cover's colours reach the card's very edge, over its light rim too (the rim made a white line around a
+        // dark cover); the card's rounded clip cuts the corners.
+        _root = new Border
+        {
+            Margin = new Thickness(-padding.Left - 1, -padding.Top - 1, -padding.Right - 1, -padding.Bottom - 1),
+            Padding = new Thickness(padding.Left + 1, padding.Top + 1, padding.Right + 1, padding.Bottom + 1),
+            CornerRadius = new CornerRadius(DeskCardFace.Radius)
+        };
         Render();
         return _root;
     }
@@ -42,16 +52,58 @@ internal sealed class MusicWidget : DeskWidget
         if (key != _shownKey)
         {
             _shownKey = key;
-            _root.Background = hub.HasMedia ? Tint(hub.ArtColor) : null;
+            _root.Background = hub.HasMedia ? Backdrop(hub) : null;
+            if (_covers != (_root.Background is not null))
+            {
+                _covers = _root.Background is not null;
+                RaiseCoversChanged();
+            }
             _root.Child = hub.HasMedia ? Layout(hub) : Idle();
         }
         Tick();
     }
 
+    /// <summary>
+    /// The cover itself, blurred to soft colour fields behind the card (as the music widget on a phone), darker
+    /// towards the bottom so the title and controls stay readable. Drawn once per song into a small picture.
+    /// </summary>
+    private static Brush Backdrop(MediaHub hub)
+    {
+        if (hub.Art is not System.Windows.Media.Imaging.BitmapSource art || art.PixelWidth < 2 || art.PixelHeight < 2) return Tint(hub.ArtColor);
+        try
+        {
+            const int Tiny = 18, Out = 96;
+            var small = new System.Windows.Media.Imaging.TransformedBitmap(art, new ScaleTransform((double)Tiny / art.PixelWidth, (double)Tiny / art.PixelHeight));
+            var visual = new DrawingVisual();
+            RenderOptions.SetBitmapScalingMode(visual, BitmapScalingMode.HighQuality);
+            using (var dc = visual.RenderOpen())
+            {
+                // Drawn a little larger than the picture, so its soft edges fall outside.
+                dc.DrawImage(small, new Rect(-10, -10, Out + 20, Out + 20));
+                var shade = new LinearGradientBrush(Color.FromArgb(0x26, 0, 0, 0), Color.FromArgb(0x9C, 0, 0, 0), 90);
+                dc.DrawRectangle(shade, null, new Rect(0, 0, Out, Out));
+            }
+            var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(Out, Out, 96, 96, PixelFormats.Pbgra32);
+            bitmap.Render(visual);
+            bitmap.Freeze();
+            var brush = new ImageBrush(bitmap) { Stretch = Stretch.UniformToFill };
+            RenderOptions.SetBitmapScalingMode(brush, BitmapScalingMode.Linear);
+            brush.Freeze();
+            return brush;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or NotSupportedException or System.Runtime.InteropServices.COMException)
+        {
+            return Tint(hub.ArtColor);
+        }
+    }
+
     private static Brush Tint(Color c)
     {
-        static Color Scale(Color color, double f) => Color.FromRgb((byte)(color.R * f), (byte)(color.G * f), (byte)(color.B * f));
-        var brush = new LinearGradientBrush(Scale(c, 0.55), Scale(c, 0.22), new Point(0, 0), new Point(1, 1));
+        // On glass the cover's colour is a tint over the glass (the glass and its rim still show through);
+        // on the dark card it is solid.
+        var glass = DeskCardFace.GlassEnabled && QiDock.Services.Widgets.WallpaperGlass.Image is not null;
+        Color Scale(Color color, double f, byte alpha) => Color.FromArgb(glass ? alpha : (byte)255, (byte)(color.R * f), (byte)(color.G * f), (byte)(color.B * f));
+        var brush = new LinearGradientBrush(Scale(c, 0.55, 0xA8), Scale(c, 0.22, 0xD0), new Point(0, 0), new Point(1, 1));
         brush.Freeze();
         return brush;
     }
@@ -166,12 +218,14 @@ internal sealed class MusicWidget : DeskWidget
             }
             default:
             {
-                _title.FontSize = 18;
+                // Large, or upright (Tall): the cover as wide as the card, the song below it.
+                var tall = Size == DeskSize.Tall;
+                _title.FontSize = tall ? 15 : 18;
                 _title.HorizontalAlignment = HorizontalAlignment.Center;
                 _artist.HorizontalAlignment = HorizontalAlignment.Center;
-                var art = Art(hub, 168, 18);
+                var art = Art(hub, tall ? 132 : 168, tall ? 16 : 18);
                 art.HorizontalAlignment = HorizontalAlignment.Center;
-                var controls = Controls(44);
+                var controls = Controls(tall ? 38 : 44);
                 controls.HorizontalAlignment = HorizontalAlignment.Center;
                 return Column(art, Margin(_title, 0, 14), _artist, Margin(ProgressBar(true), 0, 12), Margin(controls, 0, 6));
             }

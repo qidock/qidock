@@ -66,6 +66,10 @@ public sealed class StartupRegistration
     {
         try
         {
+            // Before the rename the dock started as "OpenTaskbar"; that entry now points at a file that is gone.
+            using (var old = Registry.CurrentUser.OpenSubKey(RunKey, writable: true))
+                if (old?.GetValue("OpenTaskbar") is string legacy && !File.Exists(legacy.Trim().Trim('"')))
+                    old.DeleteValue("OpenTaskbar", throwOnMissingValue: false);
             string? runValue;
             using (var key = Registry.CurrentUser.OpenSubKey(RunKey)) runValue = key?.GetValue(ValueName) as string;
             if (string.IsNullOrWhiteSpace(runValue) || TaskExists()) return;
@@ -83,6 +87,46 @@ public sealed class StartupRegistration
         catch (Exception ex) when (ex is UnauthorizedAccessException or SecurityException or IOException or InvalidOperationException)
         {
             AppLog.Write($"Başlangıç görevi oluşturulamadı: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// A "QiDock" entry in the Start menu that points at this copy, so a closed dock is always one search away. Made
+    /// (or pointed at a moved exe) quietly; nothing happens when it is already right.
+    /// </summary>
+    public static void EnsureStartMenuShortcut()
+    {
+        var executable = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(executable) || !File.Exists(executable)
+            || !string.Equals(Path.GetFileName(executable), "QiDock.exe", StringComparison.OrdinalIgnoreCase)) return;
+        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "QiDock.lnk");
+        object? shell = null, link = null;
+        try
+        {
+            if (Type.GetTypeFromProgID("WScript.Shell") is not { } type) return;
+            shell = Activator.CreateInstance(type);
+            if (shell is null) return;
+            const System.Reflection.BindingFlags Get = System.Reflection.BindingFlags.GetProperty, Set = System.Reflection.BindingFlags.SetProperty;
+            link = type.InvokeMember("CreateShortcut", System.Reflection.BindingFlags.InvokeMethod, null, shell, [path]);
+            if (link is null) return;
+            var linkType = link.GetType();
+            var current = linkType.InvokeMember("TargetPath", Get, null, link, null) as string;
+            if (File.Exists(path) && string.Equals(current, executable, StringComparison.OrdinalIgnoreCase)) return;
+            linkType.InvokeMember("TargetPath", Set, null, link, [executable]);
+            linkType.InvokeMember("WorkingDirectory", Set, null, link, [Path.GetDirectoryName(executable) ?? ""]);
+            linkType.InvokeMember("IconLocation", Set, null, link, [executable + ",0"]);
+            linkType.InvokeMember("Description", Set, null, link, ["QiDock"]);
+            linkType.InvokeMember("Save", System.Reflection.BindingFlags.InvokeMethod, null, link, null);
+            AppLog.Write("Başlat menüsüne QiDock kısayolu eklendi");
+        }
+        catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or System.Reflection.TargetInvocationException or UnauthorizedAccessException or IOException)
+        {
+            AppLog.Write($"Başlat menüsü kısayolu yapılamadı: {ex.Message}");
+        }
+        finally
+        {
+            if (link is not null && System.Runtime.InteropServices.Marshal.IsComObject(link)) System.Runtime.InteropServices.Marshal.ReleaseComObject(link);
+            if (shell is not null && System.Runtime.InteropServices.Marshal.IsComObject(shell)) System.Runtime.InteropServices.Marshal.ReleaseComObject(shell);
         }
     }
 

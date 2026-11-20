@@ -46,15 +46,19 @@ public partial class MainWindow
             _topBar?.Update(); // the bar stays down while a card stands on it
             if (standing is { } solid && !_panelOnTopBar)
             {
-                DockSurface.Background = solid;
-                DockSurface.BorderBrush = solid;
+                // Glass: the card wears the dock's glass, so both stay glass; otherwise both turn solid.
+                RefreshDockGlass();
+                if (Services.Widgets.GlassLook.DockVeil is null)
+                {
+                    DockSurface.Background = solid;
+                    DockSurface.BorderBrush = solid;
+                }
                 _dockShadow ??= DockSurface.Effect;
                 DockSurface.Effect = null;
             }
             else
             {
-                DockSurface.SetResourceReference(System.Windows.Controls.Border.BackgroundProperty, "DockMaterial");
-                DockSurface.SetResourceReference(System.Windows.Controls.Border.BorderBrushProperty, "DockBorderMaterial");
+                RefreshDockGlass();
                 if (_dockShadow is not null && App.Shadows) DockSurface.Effect = _dockShadow;
             }
         };

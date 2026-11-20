@@ -42,7 +42,10 @@ public sealed record DockSettings(
     bool ClaudeActivity = true,
     bool Magnify = false,
     double MagnifyScale = 1.85,
-    bool LowMemory = false)
+    bool LowMemory = false,
+    bool NotchBrowser = true,
+    bool DockGlass = true,
+    double DockScale = 1.0)
 {
     [System.Text.Json.Serialization.JsonIgnore]
     public WidgetSettings WidgetOptions => Widgets ?? new WidgetSettings();

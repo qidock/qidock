@@ -120,6 +120,8 @@ public partial class SettingsWindow : Window
         AnimationsToggle.IsChecked = settings.AnimationsEnabled;
         GenieToggle.IsChecked = settings.GenieEffectEnabled;
         PreviewsToggle.IsChecked = settings.PreviewsEnabled;
+        NotchBrowserToggle.IsChecked = settings.NotchBrowser;
+        DockGlassToggle.IsChecked = settings.DockGlass;
         BadgesToggle.IsChecked = settings.NotificationBadgesEnabled;
         DockHudToggle.IsChecked = settings.DockHud;
         ClaudeActivityToggle.IsChecked = settings.ClaudeActivity;
@@ -262,6 +264,8 @@ public partial class SettingsWindow : Window
             AnimationsEnabled = Pick(AnimationsToggle.IsChecked == true, shown.AnimationsEnabled, now.AnimationsEnabled),
             GenieEffectEnabled = Pick(GenieToggle.IsChecked == true, shown.GenieEffectEnabled, now.GenieEffectEnabled),
             PreviewsEnabled = Pick(PreviewsToggle.IsChecked == true, shown.PreviewsEnabled, now.PreviewsEnabled),
+            NotchBrowser = Pick(NotchBrowserToggle.IsChecked == true, shown.NotchBrowser, now.NotchBrowser),
+            DockGlass = Pick(DockGlassToggle.IsChecked == true, shown.DockGlass, now.DockGlass),
             NotificationBadgesEnabled = Pick(BadgesToggle.IsChecked == true, shown.NotificationBadgesEnabled, now.NotificationBadgesEnabled),
             DockHud = Pick(DockHudToggle.IsChecked == true, shown.DockHud, now.DockHud),
             ClaudeActivity = Pick(ClaudeActivityToggle.IsChecked == true, shown.ClaudeActivity, now.ClaudeActivity),

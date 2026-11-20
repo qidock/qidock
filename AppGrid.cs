@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Windows;
@@ -173,23 +173,70 @@ internal static class AppUsage
 }
 
 /// <summary>
-/// Every installed app on pages of large icons over the blurred desktop, like a phone's home
-/// screen: swipe, scroll or use the arrow keys to turn pages, type to search, drag an icon to move
-/// it and drop it on another to make a folder. The arrangement is remembered.
+/// Every installed app in a glass panel over the blurred desktop: a large search pill on top, category chips, the
+/// user's folders and most used apps first, then every app from A to Z below a thin line. Scroll with the wheel,
+/// the touchpad or the keys; type to search; drop an icon on another to make a folder. Only the rows in view (and a
+/// few around them) are built, and icons stay cached between openings.
 /// </summary>
 public sealed class AppGridWindow : OverlayWindow
 {
-    private const double SearchTop = 56;
     private const double DragThreshold = 6;
-    // Without the blur the screen is darkened almost fully; over the blur a light shade is enough.
-    private static readonly Brush Dim = Ui.Solid("#F00E0F13");
-    private static readonly Brush FrostedDim = Ui.Solid("#2E000000");
-    private static readonly Brush FolderFill = Ui.Solid("#38FFFFFF");
-    private static readonly Brush FolderEdge = Ui.Solid("#2EFFFFFF");
+    // Around the panel the screen goes almost black, as behind a sheet of dark glass.
+    private static readonly Brush Dim = Ui.Solid("#EB040405");
+    private static readonly Brush PanelFill = Vertical("#FA202023", "#FA161618");
+    private static readonly Brush PanelEdge = Vertical("#38FFFFFF", "#17FFFFFF");
+    private static readonly Brush PillFill = Vertical("#FF3B3B3F", "#FF1B1B1E");
+    private static readonly Brush PillEdge = Vertical("#66FFFFFF", "#1AFFFFFF");
+    private static readonly Brush PillText = Ui.Solid("#FFDCDCDE");
+    private static readonly Brush PillGlyph = Ui.Solid("#FFBDBDC1");
+    private static readonly Brush SortFill = Ui.Solid("#80FFFFFF");
+    private static readonly Brush SortHover = Ui.Solid("#B3FFFFFF");
+    private static readonly Brush SortGlyph = Ui.Solid("#FF26262A");
+    private static readonly Brush ChipFill = Ui.Solid("#2BFFFFFF");
+    private static readonly Brush ChipHover = Ui.Solid("#40FFFFFF");
+    private static readonly Brush ChipEdge = Ui.Solid("#1AFFFFFF");
+    private static readonly Brush ChipOn = Ui.Solid("#FFE4E4E6");
+    private static readonly Brush ChipOnText = Ui.Solid("#FF1A1A1C");
+    private static readonly Brush ChipText = Ui.Solid("#FFE8E8EA");
+    private static readonly Brush LabelText = Ui.Solid("#FFF2F2F4");
+    private static readonly Brush FolderFill = Vertical("#66FFFFFF", "#4DFFFFFF");
+    private static readonly Brush FolderEdge = Ui.Solid("#33FFFFFF");
     private static readonly Brush TargetFill = Ui.Solid("#4DFFFFFF");
-    private static readonly Brush DotOn = Ui.Solid("#F2FFFFFF");
-    private static readonly Brush DotOff = Ui.Solid("#59FFFFFF");
-    // Icons stay cached between openings (about 64 KB each) so the pages fill at once next time.
+    private static readonly Brush LineFill = Ui.Solid("#2EFFFFFF");
+    private static readonly Brush ThumbFill = Ui.Solid("#33FFFFFF");
+
+    private static Brush Vertical(string top, string bottom)
+    {
+        var brush = new LinearGradientBrush(((SolidColorBrush)Ui.Solid(top)).Color, ((SolidColorBrush)Ui.Solid(bottom)).Color, 90);
+        brush.Freeze();
+        return brush;
+    }
+
+    private readonly double _k;
+    private readonly double _panelTop;
+    private const double GridTop = 2;
+
+    /// <summary>
+    /// How large the icons are: their size in points, and the screen pixels that covers. Icons are read at exactly
+    /// those pixels and drawn on whole pixels, so they are never scaled again (scaling them made them grainy).
+    /// </summary>
+    private static readonly (double Dip, int Pixels) IconSize = MeasureIcon();
+
+    /// <summary>Screen pixels per point on the main screen.</summary>
+    private static double ScreenScale => Application.Current?.MainWindow is { } main && PresentationSource.FromVisual(main) is not null
+        ? VisualTreeHelper.GetDpi(main).DpiScaleX
+        : VisualTreeHelper.GetDpi(new DrawingVisual()).DpiScaleX;
+
+    private static (double, int) MeasureIcon()
+    {
+        var k = Math.Clamp(SystemParameters.PrimaryScreenHeight / 1080, 0.78, 1.4);
+        var dpi = ScreenScale;
+        var pixels = (int)Math.Round(90 * k * dpi);
+        return (pixels / dpi, pixels);
+    }
+
+    private static ImageSource? ReadIcon(string id) => NotificationApps.LoadIcon(id, IconSize.Pixels, exact: true);
+    // Icons stay cached between openings (about 64 KB each) so the panel fills at once next time.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, ImageSource?> Icons = new(StringComparer.OrdinalIgnoreCase);
 
     private sealed class TileParts
@@ -199,64 +246,60 @@ public sealed class AppGridWindow : OverlayWindow
         public required Border Backdrop;
     }
 
-    /// <summary>A press on a tile or on the empty page, until the button goes up.</summary>
+    /// <summary>A press on a tile, until the button goes up.</summary>
     private sealed class Press
     {
         public Point Start;
-        public LaunchEntry? Entry;          // a tile on the pages
+        public LaunchEntry? Entry;          // a tile in the panel
         public string? FolderApp;           // an app tile inside the open folder
         public FrameworkElement? Icon;
-        public bool Swiping;
-        public bool Fixed;                  // a tile in the row of most used apps: opens, never moves
-        public double SwipeFrom;
+        public bool Fixed;                  // opens, never moves (most used row, folders, filtered views)
     }
 
     /// <summary>An icon being dragged.</summary>
     private sealed class Drag
     {
-        public required LaunchEntry Entry;  // what moves on the pages (an app or a folder)
+        public required LaunchEntry Entry;
         public required FrameworkElement Ghost;
         public Vector Grab;
         public LaunchEntry? Folder;         // set while the app is still inside the open folder
     }
 
-    private readonly double _cols, _rows, _cellW, _cellH, _icon, _gridLeft, _gridTop;
-    private readonly Grid _host = new() { ClipToBounds = true };
+    private readonly double _cols, _cellW, _cellH, _icon, _gridLeft;
+    private readonly Border _pill;
+    private readonly Border _panel;
+    private readonly Grid _host = new() { ClipToBounds = true, Background = Brushes.Transparent };
     private readonly Canvas _strip = new() { Background = Brushes.Transparent };
     private readonly TranslateTransform _stripShift = new();
-    private readonly StackPanel _dots = new() { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom };
+    private readonly Border _line = new() { Height = 1, Background = LineFill, IsHitTestVisible = false, Visibility = Visibility.Collapsed };
+    private readonly Border _thumb = new() { Width = 4, CornerRadius = new CornerRadius(2), Background = ThumbFill, Opacity = 0, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 0, 7, 0), IsHitTestVisible = false, Visibility = Visibility.Collapsed };
+    private readonly StackPanel _chips = new() { Orientation = Orientation.Horizontal };
+    private readonly ScrollViewer _chipScroll;
+    private readonly Border _sortButton;
     private readonly Grid _folderLayer = new() { Visibility = Visibility.Collapsed };
     private readonly Canvas _dragLayer = new() { IsHitTestVisible = false };
     private readonly TextBlock _note = new() { Foreground = Ui.WhiteSoft, FontSize = 14, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
     private readonly TextBox _box;
     private readonly Dictionary<string, InstalledApp> _known = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<LaunchEntry, TileParts> _tiles = [];
-    private readonly Dictionary<string, LaunchEntry> _searchEntries = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<LaunchEntry, Point> _slots = [];
+    private readonly Dictionary<string, LaunchEntry> _viewEntries = new(StringComparer.OrdinalIgnoreCase);
     private readonly DispatcherTimer _edgeTimer;
     private readonly Queue<(Image Image, string Id)> _iconQueue = new();
     private bool _iconLoaderRunning;
     private bool _closed;
 
-    private List<LaunchEntry> _items = [];
-    private List<LaunchEntry> _shown = [];   // what the pages show now (the search results while searching)
-    private List<LaunchEntry> _others = [];  // the pages without the dragged icon
-    private List<LaunchEntry> _frequent = []; // the most used apps, a row at the top of the first page
-    private readonly Border _shelf = new() { CornerRadius = new CornerRadius(22), Background = Ui.Solid("#14FFFFFF"), BorderBrush = Ui.Solid("#1AFFFFFF"), BorderThickness = new Thickness(1), IsHitTestVisible = false };
-    private readonly TextBlock _shelfName = new() { Text = UiText.Get("AppGridFrequent"), Foreground = Ui.Solid("#B3FFFFFF"), FontSize = 12, FontWeight = FontWeights.SemiBold, IsHitTestVisible = false };
-    private int _dropIndex;
+    private List<LaunchEntry> _items = [];    // the arrangement: folders and the apps outside them
+    private List<LaunchEntry> _frequent = []; // the most used apps, after the folders on top
+    private List<LaunchEntry> _order = [];    // what the panel shows, in reading order
+    private string _category = AppCategories.All;
+    private double _scroll, _contentHeight, _lineY = -1, _thumbAt;
     private LaunchEntry? _folderTarget;
-    private LaunchEntry? _selected;         // the icon the arrow keys are on
-    private int _page;
-    private int _pageCount = 1;
-    private (int From, int To) _livePages;  // the pages that have tiles
-    private bool _neighborsReady;           // false while opening: only the first page is made
+    private LaunchEntry? _selected;           // the icon the arrow keys are on
     private Press? _press;
     private Drag? _drag;
     private Point _lastPoint;
     private int _edgeDirection;
-    private double _wheel;
-    private DateTime _wheelLock;
-    private DateTime _wheelLast;
 
     // The open folder.
     private LaunchEntry? _openFolder;
@@ -276,8 +319,8 @@ public sealed class AppGridWindow : OverlayWindow
     }
 
     /// <summary>
-    /// Loads the app list and the icons of the first pages quietly in the background (some time
-    /// after QiDock starts), so the first opening already shows every icon instead of filling in.
+    /// Loads the app list and the first icons quietly in the background (some time after QiDock starts), so the first
+    /// opening already shows every icon instead of filling in.
     /// </summary>
     public static void Prewarm()
     {
@@ -291,61 +334,200 @@ public sealed class AppGridWindow : OverlayWindow
             if (ids.Count == 0) return;
             var thread = new Thread(() =>
             {
-                foreach (var id in ids) Icons.GetOrAdd(id, key => NotificationApps.LoadIcon(key, 128));
+                foreach (var id in ids) Icons.GetOrAdd(id, ReadIcon);
             }) { IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = "AppGrid icon prewarm" };
             thread.SetApartmentState(ApartmentState.STA);
             thread.Start();
         }, CancellationToken.None, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.FromCurrentSynchronizationContext());
     }
 
+    private static string L(string turkish, string english) => DesktopWidgets.Desk.L(turkish, english);
+
+#if DEBUG
+    /// <summary>Opens the app screen without taking the keyboard, waits for the icons and saves it as a picture.</summary>
+    internal static void RenderTo(string path, Action done)
+    {
+        var window = new AppGridWindow { ShowActivated = false };
+        window.Show();
+        window.Root.Opacity = 1;
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            var dpi = VisualTreeHelper.GetDpi(window);
+            var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(
+                (int)Math.Ceiling(window.Root.ActualWidth * dpi.DpiScaleX), (int)Math.Ceiling(window.Root.ActualHeight * dpi.DpiScaleY),
+                dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
+            bitmap.Render(window.Root);
+            var png = new System.Windows.Media.Imaging.PngBitmapEncoder();
+            png.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));
+            using (var file = File.Create(path)) png.Save(file);
+            window.Close();
+            done();
+        };
+        timer.Start();
+    }
+#endif
+
     private AppGridWindow() : base(Dim)
     {
-        // Pages of up to 7 × 5 icons, fewer on small screens; the grid sits between the search field and the page dots.
-        const double top = 120, bottom = 110;
-        var usable = Height - top - bottom;
-        _cols = Math.Clamp((int)((Width - 240) / 140), 4, 7);
-        _rows = Math.Clamp((int)(usable / 128), 3, 5);
-        _cellW = Math.Min(156, (Width - 240) / _cols);
-        _cellH = Math.Min(132, usable / _rows);
-        // Icons are loaded at 128 pixels: never drawn larger than that on screen, so they stay sharp.
-        var scale = Application.Current?.MainWindow is { } main && PresentationSource.FromVisual(main)?.CompositionTarget is { } target ? target.TransformToDevice.M11 : 1.5;
-        _icon = Math.Floor(Math.Min(Math.Clamp(Math.Min(_cellW, _cellH) * 0.46, 44, 60), 128 / scale));
-        _gridLeft = (Width - _cols * _cellW) / 2;
-        _gridTop = top + (usable - _rows * _cellH) / 2;
+        // The screen darkens; the search pill (660 × 108) stands near the top and the glass panel (1114 wide) below
+        // it, down to just above the dock, seven columns of 90-point icons. Sizes are measured on a 1080-line screen.
+        var screenWidth = Width;
+        var screenHeight = Height;
+        _k = Math.Clamp(screenHeight / 1080, 0.78, 1.4);
+        var k = _k;
+        var pillTop = Math.Round(76 * k);
+        var pillHeight = Math.Round(108 * k);
+        var panelWidth = Math.Round(Math.Min(1114 * k, screenWidth - 80));
+        _panelTop = Math.Round(204 * k);
+        var dockRoom = Math.Max(135 * k, TaskbarReplacementSession.DockHeightDips + 40 * k);
+        var panelHeight = Math.Round(Math.Max(320, screenHeight - _panelTop - dockRoom));
+        Root.UseLayoutRounding = true; // icons on whole pixels stay sharp
+        var inner = panelWidth - 2 - 48 * k;
+        _cols = Math.Clamp(Math.Round(inner / (152 * k)), 4, 9);
+        _cellW = Math.Floor(inner / _cols);
+        _icon = IconSize.Dip;
+        _cellH = Math.Round(144 * k);
+        _gridLeft = Math.Round((panelWidth - 2 - _cols * _cellW) / 2);
 
-        _strip.RenderTransform = _stripShift;
-        _strip.Height = Height;
-        _host.Children.Add(_strip);
-        _host.Children.Add(_note);
-        Root.Children.Add(_host);
-
-        var (field, box) = SearchField(UiText.Get("AppGridSearch"), 15, Ui.White, Ui.Solid("#A6FFFFFF"), Ui.Solid("#33FFFFFF"));
-        _box = box;
-        field.Width = 300;
-        field.HorizontalAlignment = HorizontalAlignment.Center;
-        field.VerticalAlignment = VerticalAlignment.Top;
-        field.Margin = new Thickness(0, SearchTop, 0, 0);
-        box.TextChanged += (_, _) =>
+        // ---- Search pill ------------------------------------------------------------------------
+        _box = new TextBox
         {
-            _page = 0;
+            FontSize = 44 * k,
+            FontWeight = FontWeights.Light,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Foreground = PillText,
+            CaretBrush = PillText,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Padding = new Thickness(0)
+        };
+        var hint = new TextBlock { Text = L("Uygulamalar", "Applications"), FontSize = 44 * k, FontWeight = FontWeights.Light, Foreground = PillText, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false, Margin = new Thickness(2, 0, 0, 0) };
+        _box.TextChanged += (_, _) =>
+        {
+            hint.Visibility = _box.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
             Refill();
-            SnapStrip();
         };
-        box.PreviewKeyDown += (_, e) =>
+        _box.PreviewKeyDown += (_, e) =>
         {
-            if (e.Key != Key.Enter || (_shown.Count == 0 && _selected is null)) return;
+            if (e.Key != Key.Enter || (_order.Count == 0 && _selected is null)) return;
             e.Handled = true;
-            Open(_selected ?? _shown[0]);
+            Open(_selected ?? _order[0]);
         };
-        Root.Children.Add(field);
+        var pillWidth = Math.Round(Math.Min(660 * k, panelWidth));
+        var glyph = Ui.Icon("IconApps", 44 * k, PillGlyph, null, 2.2);
+        glyph.VerticalAlignment = VerticalAlignment.Center;
+        glyph.Margin = new Thickness(0, 0, 30 * k, 0);
+        var sortIcon = Ui.Icon("IconArrowUpDown", 17 * k, SortGlyph, null, 2.4);
+        sortIcon.HorizontalAlignment = HorizontalAlignment.Center;
+        sortIcon.VerticalAlignment = VerticalAlignment.Center;
+        _sortButton = new Border
+        {
+            Width = 40 * k,
+            Height = 40 * k,
+            CornerRadius = new CornerRadius(20 * k),
+            Background = SortFill,
+            VerticalAlignment = VerticalAlignment.Center,
+            Cursor = Cursors.Hand,
+            Child = sortIcon
+        };
+        _sortButton.MouseEnter += (_, _) => _sortButton.Background = SortHover;
+        _sortButton.MouseLeave += (_, _) => _sortButton.Background = SortFill;
+        _sortButton.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            AppCategories.SortByUse = !AppCategories.SortByUse;
+            ShowSortTip();
+            Refill();
+        };
+        ShowSortTip();
+        var text = new Grid();
+        text.Children.Add(hint);
+        text.Children.Add(_box);
+        var pillRow = new DockPanel();
+        DockPanel.SetDock(glyph, Dock.Left);
+        DockPanel.SetDock(_sortButton, Dock.Right);
+        pillRow.Children.Add(glyph);
+        pillRow.Children.Add(_sortButton);
+        pillRow.Children.Add(text);
+        _pill = new Border
+        {
+            Child = pillRow,
+            Width = pillWidth,
+            Height = pillHeight,
+            CornerRadius = new CornerRadius(pillHeight / 2),
+            Background = PillFill,
+            BorderBrush = PillEdge,
+            BorderThickness = new Thickness(1.5),
+            Padding = new Thickness(34 * k, 0, 32 * k, 0),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, pillTop, 0, 0)
+        };
 
-        _dots.Margin = new Thickness(0, 0, 0, Math.Max(40, Height - (_gridTop + _rows * _cellH) - 64));
-        Root.Children.Add(_dots);
+        // ---- Panel: chips on top, the icons below ---------------------------------------------
+        _chipScroll = new ScrollViewer
+        {
+            Content = _chips,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Focusable = false,
+            Margin = new Thickness(24 * k, 18 * k, 24 * k, 14 * k)
+        };
+        _strip.RenderTransform = _stripShift;
+        _strip.Width = panelWidth - 2;
+        _strip.Children.Add(_line);
+        _host.Children.Add(_strip);
+        _host.Children.Add(_thumb);
+        _host.Children.Add(_note);
+        _host.SizeChanged += (_, _) => Realize();
+        var body = new Grid();
+        body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        body.RowDefinitions.Add(new RowDefinition());
+        body.Children.Add(_chipScroll);
+        Grid.SetRow(_host, 1);
+        body.Children.Add(_host);
+        _panel = new Border
+        {
+            Child = body,
+            Width = panelWidth,
+            Height = panelHeight,
+            CornerRadius = new CornerRadius(28 * k),
+            Background = PanelFill,
+            BorderBrush = PanelEdge,
+            BorderThickness = new Thickness(1),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, _panelTop, 0, 0)
+        };
+        // The icons are cut off by the panel's rounded bottom, as in a scrolling list.
+        _host.Margin = new Thickness(0, 0, 0, 2);
+        _host.Clip = null;
+        body.ClipToBounds = false;
+        _panel.SizeChanged += (_, _) =>
+        {
+            var radius = 28 * k - 1;
+            _host.Clip = new RectangleGeometry(new Rect(0, -_chipScroll.ActualHeight, _host.ActualWidth, _host.ActualHeight + _chipScroll.ActualHeight), radius, radius);
+        };
+        Root.Children.Add(_panel);
+        Root.Children.Add(_pill);
         Root.Children.Add(_folderLayer);
         Root.Children.Add(_dragLayer);
+        Frost(new Rect((screenWidth - panelWidth) / 2, _panelTop, panelWidth, panelHeight));
 
-        _edgeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(550) };
-        _edgeTimer.Tick += (_, _) => FlipWhileDragging();
+        // Holding a dragged icon near the top or bottom of the panel scrolls it.
+        _edgeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(30) };
+        _edgeTimer.Tick += (_, _) =>
+        {
+            if (_drag is null || _edgeDirection == 0)
+            {
+                _edgeTimer.Stop();
+                return;
+            }
+            ScrollTo(_scroll + _edgeDirection * 14, animate: false);
+            DragTo(_lastPoint);
+        };
 
         PreviewMouseLeftButtonDown += OnPressDown;
         PreviewMouseMove += OnPressMove;
@@ -354,9 +536,9 @@ public sealed class AppGridWindow : OverlayWindow
         PreviewMouseWheel += (_, e) =>
         {
             // In an open folder the wheel scrolls the folder's own list.
-            if (_openFolder is not null) return;
+            if (_openFolder is not null || _drag is not null) return;
             e.Handled = true;
-            Wheel(-e.Delta);
+            ScrollTo(_scroll - e.Delta * 0.9);
         };
         PreviewKeyDown += OnKey;
         PreviewMouseRightButtonUp += OnMenu;
@@ -365,40 +547,86 @@ public sealed class AppGridWindow : OverlayWindow
         Load(AppList.Cached ?? []);
         AppList.RefreshAsync().ContinueWith(t =>
         {
-            // Rebuilding the pages takes a moment, so only when the list really changed (and nothing is in hand).
+            // Rebuilding takes a moment, so only when the list really changed (and nothing is in hand).
             if (_closed || _drag is not null || _openFolder is not null) return;
             if (t.Result.Count == _known.Count && t.Result.All(a => _known.ContainsKey(a.Id))) return;
             Load(t.Result);
         }, CancellationToken.None, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.FromCurrentSynchronizationContext());
     }
 
-    protected override bool Frosted => true;
+    /// <summary>
+    /// The panel becomes frosted glass: the desktop picture behind it, softened, with its own colours (as the
+    /// widgets show it) under a light veil. Without a desktop picture, what is on the screen behind it, blurred
+    /// (read here, before the window shows). Where neither can be had it keeps its solid fill.
+    /// </summary>
+    private void Frost(Rect panel)
+    {
+        var veil = Color.FromArgb(0x5C, 0x0C, 0x0C, 0x10);
+        if (Services.Widgets.GlassLook.Surface(new Rect(panel.Size), panel, veil, sheen: true, frost: false) is { } wallpaper)
+        {
+            _panel.Background = wallpaper;
+            return;
+        }
+        var dpi = ScreenScale;
+        const double Margin = 24; // read a little more than the window, so the blur at the edges has something to blend
+        var screenPixels = new Rect(0, 0, Math.Round(SystemParameters.PrimaryScreenWidth * dpi), Math.Round(SystemParameters.PrimaryScreenHeight * dpi));
+        var wanted = new Rect((Left - Margin) * dpi, (Top - Margin) * dpi, (Width + 2 * Margin) * dpi, (Height + 2 * Margin) * dpi);
+        wanted.Intersect(screenPixels);
+        if (wanted.IsEmpty) return;
+        var area = new Int32Rect((int)wanted.X, (int)wanted.Y, (int)wanted.Width, (int)wanted.Height);
+        if (ScreenGlass.Capture(area, Colors.Transparent) is not { } glass) return;
+        // Where the picture lies, in the window's own points.
+        var picture = new Rect(area.X / dpi - Left, area.Y / dpi - Top, area.Width / dpi, area.Height / dpi);
+        _panel.Background = Glass(glass, picture, panel, Color.FromArgb(0xA6, 0x16, 0x16, 0x19));
+    }
 
-    protected override bool IsBackground(object source) => ReferenceEquals(source, _strip) || ReferenceEquals(source, _host);
+    private static Brush Glass(ImageSource glass, Rect picture, Rect element, Color veil)
+    {
+        var drawing = new DrawingGroup();
+        // Drawn in the element's own points: the picture shifted by where the element stands, the veil over it.
+        drawing.Children.Add(new ImageDrawing(glass, new Rect(picture.X - element.X, picture.Y - element.Y, picture.Width, picture.Height)));
+        drawing.Children.Add(new GeometryDrawing(new SolidColorBrush(veil), null, new RectangleGeometry(new Rect(0, 0, element.Width, element.Height))));
+        var box = new Rect(0, 0, element.Width, element.Height);
+        var brush = new DrawingBrush(drawing)
+        {
+            Stretch = Stretch.Fill,
+            ViewboxUnits = BrushMappingMode.Absolute, Viewbox = box,
+            ViewportUnits = BrushMappingMode.Absolute, Viewport = box
+        };
+        RenderOptions.SetBitmapScalingMode(brush, BitmapScalingMode.Linear);
+        brush.Freeze();
+        return brush;
+    }
 
-    protected override void OnShown() => _box.Focus();
+    protected override void OnShown()
+    {
+        _box.Focus();
+        // The dock and the menu bar stay on top of the darkened screen, as in macOS.
+        foreach (Window window in Application.Current.Windows)
+        {
+            if (window is OverlayWindow || !window.IsVisible || !window.Topmost) continue;
+            if (PresentationSource.FromVisual(window) is HwndSource source)
+                SetWindowPos(source.Handle, -1 /* topmost */, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 /* no size, no move, no activate */);
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool SetWindowPos(nint window, nint after, int x, int y, int width, int height, uint flags);
 
     /// <summary>
-    /// The page settles from slightly large to its size. It moves as one cached picture (so the
-    /// graphics card only scales it), and the pages beside it are made once it has stopped.
+    /// The pill and the panel rise a few points into place while they fade in. Nothing is scaled, so the icons are
+    /// as sharp while it moves as after.
     /// </summary>
     protected override void OnPresented()
     {
-        var scale = new ScaleTransform(1.06, 1.06, Width / 2, Height / 2);
-        _host.RenderTransform = scale;
-        _host.CacheMode = new BitmapCache { SnapsToDevicePixels = true };
-        var time = TimeSpan.FromMilliseconds(280);
-        var grow = new DoubleAnimation(1, time) { EasingFunction = Motion.Out };
-        grow.Completed += (_, _) =>
+        foreach (var part in new FrameworkElement[] { _pill, _panel })
         {
-            _host.CacheMode = null;
-            _host.RenderTransform = Transform.Identity;
-            if (_closed) return;
-            _neighborsReady = true;
-            Dispatcher.BeginInvoke(() => { if (!_closed && _drag is null) Arrange(false); }, DispatcherPriority.Background);
-        };
-        scale.BeginAnimation(ScaleTransform.ScaleXProperty, grow);
-        scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1, time) { EasingFunction = Motion.Out });
+            var shift = new TranslateTransform(0, Math.Round(10 * _k));
+            part.RenderTransform = shift;
+            var rise = new DoubleAnimation(0, TimeSpan.FromMilliseconds(220)) { EasingFunction = Motion.Out };
+            rise.Completed += (_, _) => part.RenderTransform = Transform.Identity;
+            shift.BeginAnimation(TranslateTransform.YProperty, rise);
+        }
     }
 
     protected override void OnDismissing()
@@ -419,23 +647,17 @@ public sealed class AppGridWindow : OverlayWindow
             _box.Clear();
             return true;
         }
+        if (_category != AppCategories.All)
+        {
+            SetCategory(AppCategories.All);
+            return true;
+        }
         return false;
     }
 
-    protected override void OnSourceInitialized(EventArgs e)
-    {
-        base.OnSourceInitialized(e);
-        if (IsFrosted) Root.Background = FrostedDim;
-        // Sideways scrolling (a tilting wheel or two fingers on a touchpad) turns pages too.
-        (PresentationSource.FromVisual(this) as HwndSource)?.AddHook((nint _, int message, nint wParam, nint _, ref bool handled) =>
-        {
-            const int wmMouseHWheel = 0x020E;
-            if (message != wmMouseHWheel) return 0;
-            Wheel((short)((wParam.ToInt64() >> 16) & 0xFFFF));
-            handled = true;
-            return 0;
-        });
-    }
+    private void ShowSortTip() => _sortButton.ToolTip = AppCategories.SortByUse
+        ? L("Kullanıma göre sıralı (tıklayınca ada göre)", "Sorted by use (click for name)")
+        : L("Ada göre sıralı (tıklayınca kullanıma göre)", "Sorted by name (click for use)");
 
     // ───────────────────────── Content ─────────────────────────
 
@@ -444,224 +666,255 @@ public sealed class AppGridWindow : OverlayWindow
         _known.Clear();
         foreach (var app in apps) _known.TryAdd(app.Id, app);
         _items = LaunchStore.Merge(LaunchStore.Load(), apps);
-        // The most used apps open the first page, on a row of their own; the arrangement below stays as the user left it.
         var scores = AppUsage.Scores();
         _frequent = apps
             .Where(a => scores.ContainsKey(a.Id))
             .OrderByDescending(a => scores[a.Id])
             .ThenBy(a => a.Name, StringComparer.CurrentCultureIgnoreCase)
-            .Take((int)_cols)
+            // Two rows on top with the folders, as many as the folders leave room for.
+            .Take(Math.Max((int)_cols, 2 * (int)_cols - _items.Count(e => e.IsFolder)))
             .Select(a => new LaunchEntry { App = a.Id })
             .ToList();
         if (_frequent.Count < 3) _frequent = [];
         foreach (var tile in _tiles.Values) _strip.Children.Remove(tile.Element);
         _tiles.Clear();
+        _viewEntries.Clear();
+        BuildChips();
         Refill();
-        SnapStrip();
     }
-
-    /// <summary>The slots the row of most used apps takes at the start of the first page (none while searching).</summary>
-    private int Lead => Searching || _frequent.Count == 0 ? 0 : (int)_cols;
 
     private bool Searching => _box.Text.Trim().Length > 0;
 
-    /// <summary>Works out what the pages show (everything, or what matches the search) and lays it out.</summary>
-    private void Refill()
+    /// <summary>A search or a category: a view of the apps, not the arrangement (icons stay put there).</summary>
+    private bool Filtered => Searching || _category != AppCategories.All;
+
+    /// <summary>"Tümü" and one chip per category that has apps.</summary>
+    private void BuildChips()
+    {
+        _chips.Children.Clear();
+        var present = _known.Values.Select(AppCategories.Of).ToHashSet();
+        if (_category != AppCategories.All && !present.Contains(_category)) _category = AppCategories.All;
+        foreach (var id in new[] { AppCategories.All }.Concat(AppCategories.Order.Where(present.Contains)))
+        {
+            var on = id == _category;
+            var label = new TextBlock { Text = AppCategories.Name(id), FontSize = 16.5 * _k, Foreground = on ? ChipOnText : ChipText, FontWeight = FontWeights.Medium };
+            var chip = new Border
+            {
+                Child = label,
+                CornerRadius = new CornerRadius(18 * _k),
+                Padding = new Thickness(17 * _k, 6 * _k, 17 * _k, 7 * _k),
+                Margin = new Thickness(0, 0, 10 * _k, 0),
+                Background = on ? ChipOn : ChipFill,
+                BorderBrush = on ? ChipOn : ChipEdge,
+                BorderThickness = new Thickness(1),
+                Cursor = Cursors.Hand,
+                Tag = id
+            };
+            if (!on)
+            {
+                chip.MouseEnter += (_, _) => chip.Background = ChipHover;
+                chip.MouseLeave += (_, _) => chip.Background = ChipFill;
+            }
+            chip.MouseLeftButtonUp += (_, e) =>
+            {
+                e.Handled = true;
+                SetCategory(id);
+            };
+            _chips.Children.Add(chip);
+        }
+    }
+
+    private void SetCategory(string id)
+    {
+        if (_category == id) return;
+        _category = id;
+        BuildChips();
+        Refill();
+        if (_chips.Children.OfType<Border>().FirstOrDefault(c => Equals(c.Tag, id)) is { } chip) chip.BringIntoView();
+    }
+
+    private void NextCategory(int step)
+    {
+        var ids = _chips.Children.OfType<Border>().Select(c => (string)c.Tag).ToList();
+        if (ids.Count == 0) return;
+        var at = ids.IndexOf(_category);
+        SetCategory(ids[((at + step) % ids.Count + ids.Count) % ids.Count]);
+    }
+
+    private string NameOfApp(string id) => _known.TryGetValue(id, out var app) ? app.Name : "";
+
+    private List<LaunchEntry> Sorted(IEnumerable<LaunchEntry> entries)
+    {
+        if (!AppCategories.SortByUse)
+            return entries.OrderBy(e => NameOfApp(e.App!), StringComparer.CurrentCultureIgnoreCase).ToList();
+        var scores = AppUsage.Scores();
+        return entries.OrderByDescending(e => scores.GetValueOrDefault(e.App!)).ThenBy(e => NameOfApp(e.App!), StringComparer.CurrentCultureIgnoreCase).ToList();
+    }
+
+    /// <summary>An app wherever it sits (inside a folder too) as its own tile, for searches and categories.</summary>
+    private LaunchEntry ViewEntry(string id) =>
+        _items.FirstOrDefault(e => !e.IsFolder && string.Equals(e.App, id, StringComparison.OrdinalIgnoreCase))
+        ?? (_viewEntries.TryGetValue(id, out var known) ? known : _viewEntries[id] = new LaunchEntry { App = id });
+
+    private IEnumerable<string> AllApps() => _items.SelectMany(e => e.IsFolder ? e.Apps! : [e.App!]);
+
+    /// <summary>Works out what the panel shows and where every icon stands; then builds the rows in view.</summary>
+    private void Refill(bool keepScroll = false)
     {
         Select(null);
-        var query = _box.Text.Trim();
-        if (query.Length == 0)
+        _slots.Clear();
+        _order = [];
+        _lineY = -1;
+        var y = GridTop;
+        var column = 0;
+        void Put(LaunchEntry entry)
         {
-            _shown = _items;
+            if (column == (int)_cols)
+            {
+                column = 0;
+                y += _cellH;
+            }
+            _slots[entry] = new Point(_gridLeft + column * _cellW, y);
+            _order.Add(entry);
+            column++;
+        }
+        void EndRow()
+        {
+            if (column == 0) return;
+            column = 0;
+            y += _cellH;
+        }
+
+        var query = _box.Text.Trim();
+        if (query.Length > 0)
+        {
+            foreach (var id in AllApps().Where(id => _known.TryGetValue(id, out var app) && Matches(app.Name, query)).Distinct(StringComparer.OrdinalIgnoreCase))
+                Put(ViewEntry(id));
+        }
+        else if (_category != AppCategories.All)
+        {
+            foreach (var entry in Sorted(AllApps().Distinct(StringComparer.OrdinalIgnoreCase)
+                .Where(id => _known.TryGetValue(id, out var app) && AppCategories.Of(app) == _category).Select(ViewEntry)))
+                Put(entry);
         }
         else
         {
-            // Apps inside folders are found too, in the order they sit on the pages.
-            _shown = _items
-                .SelectMany(e => e.IsFolder ? e.Apps! : [e.App!])
-                .Where(id => _known.TryGetValue(id, out var app) && Matches(app.Name, query))
-                .Select(id => _searchEntries.TryGetValue(id, out var known) ? known : _searchEntries[id] = new LaunchEntry { App = id })
-                .ToList();
+            var top = _items.Where(e => e.IsFolder).Concat(_frequent).ToList();
+            foreach (var entry in top) Put(entry);
+            EndRow();
+            var rest = Sorted(_items.Where(e => !e.IsFolder));
+            if (top.Count > 0 && rest.Count > 0)
+            {
+                _lineY = y + 14 * _k;
+                y += 30 * _k;
+            }
+            foreach (var entry in rest) Put(entry);
         }
-        _note.Text = _known.Count == 0 ? UiText.Get("AppGridLoading") : _shown.Count == 0 ? UiText.Get("AppGridNoMatch") : "";
-        Arrange(false);
+        EndRow();
+        _contentHeight = y + 10;
+        _note.Text = _known.Count == 0 ? UiText.Get("AppGridLoading") : _order.Count == 0 ? UiText.Get("AppGridNoMatch") : "";
+        foreach (var gone in _tiles.Keys.Where(k => !_slots.ContainsKey(k)).ToList()) Forget(gone);
+        ScrollTo(keepScroll ? _scroll : 0, animate: false);
+    }
+
+    private double ViewHeight => _host.ActualHeight > 0 ? _host.ActualHeight : Math.Max(200, _panel.Height - 80);
+
+    private double MaxScroll => Math.Max(0, _contentHeight - ViewHeight);
+
+    private void ScrollTo(double target, bool animate = true)
+    {
+        target = Math.Clamp(target, 0, MaxScroll);
+        if (PresentationSource.FromVisual(this) is { } source) // on a whole screen pixel, or every icon is drawn between two
+        {
+            var dpi = source.CompositionTarget.TransformToDevice.M22;
+            target = Math.Min(Math.Round(target * dpi) / dpi, MaxScroll);
+        }
+        _scroll = target;
+        Realize();
+        if (!animate)
+        {
+            _stripShift.BeginAnimation(TranslateTransform.YProperty, null);
+            _stripShift.Y = -target;
+            return;
+        }
+        _stripShift.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(-target, TimeSpan.FromMilliseconds(200)) { EasingFunction = Motion.Out });
     }
 
     /// <summary>
-    /// The icons in the order they stand on the pages: first the row of most used apps, then the
-    /// arrangement. Null is an empty slot (the rest of that row, or where a dragged icon would land).
+    /// Builds the tiles of the rows in view and two rows around them, and lets the others go. Tiles are kept between
+    /// calls, so with <paramref name="animate"/> the ones whose place changed glide there.
     /// </summary>
-    private List<LaunchEntry?> Display()
+    private void Realize(bool animate = false)
     {
-        var lead = Lead;
-        var list = new List<LaunchEntry?>(lead + _shown.Count + 1);
-        if (lead > 0)
+        if (_closed) return;
+        _strip.Height = Math.Max(_contentHeight, ViewHeight);
+        var from = _scroll - _cellH * 2;
+        var to = _scroll + ViewHeight + _cellH * 2;
+        foreach (var gone in _tiles.Keys.Where(k => !_slots.TryGetValue(k, out var at) || at.Y + _cellH < from || at.Y > to).ToList())
         {
-            list.AddRange(_frequent);
-            while (list.Count < lead) list.Add(null);
-        }
-        if (_drag is null || _drag.Folder is not null)
-        {
-            list.AddRange(_shown);
-            return list;
-        }
-        var rest = new List<LaunchEntry?>(_others);
-        rest.Insert(Math.Clamp(_dropIndex, 0, rest.Count), null);
-        list.AddRange(rest);
-        return list;
-    }
-
-    private int PerPage => (int)(_cols * _rows);
-
-    private Point Slot(int index)
-    {
-        var page = index / PerPage;
-        var at = index % PerPage;
-        return new Point(page * Width + _gridLeft + at % (int)_cols * _cellW, _gridTop + at / (int)_cols * _cellH);
-    }
-
-    /// <summary>
-    /// Puts the icons of the shown page and the pages beside it in their places (the other pages
-    /// have no tiles until they come near). Tiles are kept between calls, so with
-    /// <paramref name="animate"/> the ones whose place changed glide there.
-    /// </summary>
-    private void Arrange(bool animate)
-    {
-        var list = Display();
-        _pageCount = Math.Max(1, (list.Count + PerPage - 1) / PerPage);
-        _strip.Width = _pageCount * Width;
-        if (_page >= _pageCount)
-        {
-            _page = _pageCount - 1;
-            SnapStrip();
-        }
-        _livePages = (_neighborsReady ? Math.Max(0, _page - 1) : _page, _neighborsReady ? Math.Min(_pageCount - 1, _page + 1) : _page);
-        var first = _livePages.From * PerPage;
-        var last = Math.Min(list.Count, (_livePages.To + 1) * PerPage);
-        var wanted = new HashSet<LaunchEntry>();
-        for (var i = first; i < last; i++)
-            if (list[i] is { } entry) wanted.Add(entry);
-        foreach (var gone in _tiles.Keys.Where(k => !wanted.Contains(k)).ToList())
-        {
-            _strip.Children.Remove(_tiles[gone].Element);
-            _tiles.Remove(gone);
+            if (_drag is not null && ReferenceEquals(gone, _drag.Entry)) continue;
+            Forget(gone);
         }
         var pending = new List<(Image, string)>();
-        for (var i = first; i < last; i++)
+        foreach (var entry in _order)
         {
-            if (list[i] is not { } entry) continue;
-            var to = Slot(i);
+            var at = _slots[entry];
+            if (at.Y + _cellH < from || at.Y > to) continue;
             if (!_tiles.TryGetValue(entry, out var tile))
             {
                 tile = MakeTile(entry, pending);
                 if (ReferenceEquals(entry, _selected)) Highlight(tile, true);
+                if (_drag is not null && ReferenceEquals(entry, _drag.Entry)) tile.Element.Opacity = 0.25;
                 _tiles[entry] = tile;
                 _strip.Children.Add(tile.Element);
-                Canvas.SetLeft(tile.Element, to.X);
-                Canvas.SetTop(tile.Element, to.Y);
+                Canvas.SetLeft(tile.Element, at.X);
+                Canvas.SetTop(tile.Element, at.Y);
                 continue;
             }
-            var from = new Point(Canvas.GetLeft(tile.Element), Canvas.GetTop(tile.Element));
-            if (from == to) continue;
-            Canvas.SetLeft(tile.Element, to.X);
-            Canvas.SetTop(tile.Element, to.Y);
+            var old = new Point(Canvas.GetLeft(tile.Element), Canvas.GetTop(tile.Element));
+            if (old == at) continue;
+            Canvas.SetLeft(tile.Element, at.X);
+            Canvas.SetTop(tile.Element, at.Y);
             if (!animate) continue;
             var shift = Motion.Shift(tile.Element);
-            shift.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(from.X - to.X + shift.X, 0, TimeSpan.FromMilliseconds(240)) { EasingFunction = Motion.Out });
-            shift.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(from.Y - to.Y + shift.Y, 0, TimeSpan.FromMilliseconds(240)) { EasingFunction = Motion.Out });
+            shift.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(old.X - at.X + shift.X, 0, TimeSpan.FromMilliseconds(240)) { EasingFunction = Motion.Out });
+            shift.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(old.Y - at.Y + shift.Y, 0, TimeSpan.FromMilliseconds(240)) { EasingFunction = Motion.Out });
         }
         RequestIcons(pending);
-        PlaceShelf();
-        BuildDots();
-    }
 
-    /// <summary>A soft band behind the row of most used apps, with its name above it.</summary>
-    private void PlaceShelf()
-    {
-        var show = Lead > 0;
-        if (show && _shelf.Parent is null)
-        {
-            _strip.Children.Insert(0, _shelf);
-            _strip.Children.Insert(0, _shelfName);
-        }
-        _shelf.Visibility = _shelfName.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-        if (!show) return;
-        _shelf.Width = _cols * _cellW + 16;
-        _shelf.Height = _cellH - 4;
-        Canvas.SetLeft(_shelf, _gridLeft - 8);
-        Canvas.SetTop(_shelf, _gridTop + 2);
-        Canvas.SetLeft(_shelfName, _gridLeft + 6);
-        Canvas.SetTop(_shelfName, _gridTop - 22);
-    }
+        _line.Visibility = _lineY >= 0 ? Visibility.Visible : Visibility.Collapsed;
+        _line.Width = _cols * _cellW - 8;
+        Canvas.SetLeft(_line, _gridLeft + 4);
+        Canvas.SetTop(_line, _lineY);
 
-    private void GoTo(int page, bool animate = true)
-    {
-        _page = Math.Clamp(page, 0, _pageCount - 1);
-        _neighborsReady = true;
-        PaintDots();
-        if (!animate)
+        // A thin bar at the right shows where in the list the panel is.
+        var view = ViewHeight;
+        if (_contentHeight <= view + 1)
         {
-            SnapStrip();
-            Arrange(false);
+            _thumb.Visibility = Visibility.Collapsed;
             return;
         }
-        // The page arrives with its tiles already made (it was beside the old one); the pages
-        // beside it are made after the slide, so making them never holds the movement up.
-        if (_page < _livePages.From || _page > _livePages.To) Arrange(false);
-        var slide = new DoubleAnimation(-_page * Width, TimeSpan.FromMilliseconds(360)) { EasingFunction = Motion.Out };
-        slide.Completed += (_, _) =>
+        _thumb.Visibility = Visibility.Visible;
+        // Shown only while the list moves, then it fades away.
+        if (_scroll != _thumbAt)
+            _thumb.BeginAnimation(OpacityProperty, new DoubleAnimationUsingKeyFrames
         {
-            if (!_closed && _drag is null && _press is null) Arrange(false);
-        };
-        _stripShift.BeginAnimation(TranslateTransform.XProperty, slide);
-    }
-
-    /// <summary>Shows the current page at once, without sliding.</summary>
-    private void SnapStrip()
-    {
-        _stripShift.BeginAnimation(TranslateTransform.XProperty, null);
-        _stripShift.X = -_page * Width;
-        PaintDots();
-    }
-
-    private void BuildDots()
-    {
-        if (_dots.Children.Count == _pageCount)
-        {
-            PaintDots();
-            return;
-        }
-        _dots.Children.Clear();
-        for (var i = 0; i < _pageCount; i++)
-        {
-            var page = i;
-            var dot = new Ellipse { Width = 8, Height = 8 };
-            // A wider transparent target than the dot itself, so it is easy to hit.
-            var hit = new Border { Child = dot, Padding = new Thickness(6), Background = Brushes.Transparent, Cursor = Cursors.Hand };
-            hit.MouseLeftButtonUp += (_, e) =>
+            KeyFrames =
             {
-                e.Handled = true;
-                GoTo(page);
-            };
-            _dots.Children.Add(hit);
-        }
-        _dots.Visibility = _pageCount > 1 ? Visibility.Visible : Visibility.Hidden;
-        PaintDots();
-    }
-
-    private void PaintDots()
-    {
-        for (var i = 0; i < _dots.Children.Count; i++)
-        {
-            if (_dots.Children[i] is Border { Child: Ellipse dot }) dot.Fill = i == _page ? DotOn : DotOff;
-        }
+                new LinearDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(80))),
+                new LinearDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(900))),
+                new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(1300)))
+            }
+        });
+        _thumb.Height = Math.Max(36, view * view / _contentHeight);
+        _thumb.Margin = new Thickness(0, (view - _thumb.Height) * (_scroll / MaxScroll), 7, 0);
+        _thumbAt = _scroll;
     }
 
     // ───────────────────────── Tiles ─────────────────────────
 
     private string NameOf(LaunchEntry entry) =>
-        entry.IsFolder ? (string.IsNullOrWhiteSpace(entry.Folder) ? UiText.Get("AppGridFolder") : entry.Folder!)
-        : _known.TryGetValue(entry.App!, out var app) ? app.Name : "";
+        entry.IsFolder ? (string.IsNullOrWhiteSpace(entry.Folder) ? UiText.Get("AppGridFolder") : entry.Folder!) : NameOfApp(entry.App!);
 
     private TileParts MakeTile(LaunchEntry entry, List<(Image, string)> pending)
     {
@@ -669,15 +922,15 @@ public sealed class AppGridWindow : OverlayWindow
         if (entry.IsFolder)
         {
             // A frosted rounded square showing the first nine apps.
-            var minis = new UniformGrid { Rows = 3, Columns = 3, Margin = new Thickness(_icon * 0.1) };
+            var minis = new UniformGrid { Rows = 3, Columns = 3, Margin = new Thickness(_icon * 0.11), VerticalAlignment = VerticalAlignment.Top };
             foreach (var id in entry.Apps!.Take(9))
             {
-                var mini = new Image { Width = _icon * 0.22, Height = _icon * 0.22, Stretch = Stretch.Uniform };
+                var mini = new Image { Width = _icon * 0.2, Height = _icon * 0.2, Stretch = Stretch.Uniform, Margin = new Thickness(_icon * 0.02) };
                 RenderOptions.SetBitmapScalingMode(mini, BitmapScalingMode.HighQuality);
                 pending.Add((mini, id));
                 minis.Children.Add(mini);
             }
-            icon = new Border { Width = _icon, Height = _icon, CornerRadius = new CornerRadius(_icon * 0.24), Background = FolderFill, BorderBrush = FolderEdge, BorderThickness = new Thickness(1), Child = minis };
+            icon = new Border { Width = _icon, Height = _icon, CornerRadius = new CornerRadius(_icon * 0.23), Background = FolderFill, BorderBrush = FolderEdge, BorderThickness = new Thickness(1), Child = minis };
         }
         else
         {
@@ -694,14 +947,14 @@ public sealed class AppGridWindow : OverlayWindow
         var image = new Image { Width = _icon, Height = _icon, Stretch = Stretch.Uniform };
         RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
         pending.Add((image, id));
-        return Assemble(image, _known.TryGetValue(id, out var app) ? app.Name : "", id);
+        return Assemble(image, NameOfApp(id), id);
     }
 
     /// <summary>The icon over its name, in a cell of the grid. No per-icon shadows: a hundred of them made the screen stutter.</summary>
     private TileParts Assemble(FrameworkElement icon, string name, object tag)
     {
         var backdrop = new Border { CornerRadius = new CornerRadius(_icon * 0.3), Background = Brushes.Transparent, RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = new ScaleTransform(0.8, 0.8) };
-        var iconHost = new Grid { Width = _icon * 1.24, Height = _icon * 1.24, HorizontalAlignment = HorizontalAlignment.Center };
+        var iconHost = new Grid { Width = Math.Round(_icon + 12 * _k), Height = Math.Round(_icon + 12 * _k), HorizontalAlignment = HorizontalAlignment.Center };
         iconHost.Children.Add(backdrop);
         icon.HorizontalAlignment = HorizontalAlignment.Center;
         icon.VerticalAlignment = VerticalAlignment.Center;
@@ -709,16 +962,15 @@ public sealed class AppGridWindow : OverlayWindow
         var label = new TextBlock
         {
             Text = name,
-            Foreground = Ui.White,
-            FontSize = 12,
+            Foreground = LabelText,
+            FontSize = 17 * _k,
             TextAlignment = TextAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxWidth = _cellW - 14,
+            MaxWidth = _cellW - 4,
             HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 2, 0, 0)
+            Margin = new Thickness(0, 3 * _k, 0, 0)
         };
-        // Only the icon and its name take clicks; the gaps between icons are the page, so a click there closes the screen.
-        var column = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Background = Brushes.Transparent, Cursor = Cursors.Hand };
+        var column = new StackPanel { VerticalAlignment = VerticalAlignment.Top, HorizontalAlignment = HorizontalAlignment.Center, Background = Brushes.Transparent, Cursor = Cursors.Hand };
         column.Children.Add(iconHost);
         column.Children.Add(label);
         var cell = new Grid { Width = _cellW, Height = _cellH, Tag = tag };
@@ -754,7 +1006,7 @@ public sealed class AppGridWindow : OverlayWindow
             foreach (var (image, id) in work)
             {
                 if (_closed) return;
-                batch.Add((image, Icons.GetOrAdd(id, key => NotificationApps.LoadIcon(key, 128))));
+                batch.Add((image, Icons.GetOrAdd(id, ReadIcon)));
                 if (batch.Count >= 16) Flush();
             }
             Flush();
@@ -786,7 +1038,6 @@ public sealed class AppGridWindow : OverlayWindow
         if (_drag is not null) return;
         var source = e.OriginalSource as DependencyObject;
         if (Ancestor<TextBox>(source, _ => true) is not null) return;
-        Select(null);
         var cell = Ancestor<FrameworkElement>(source, f => f.Tag is LaunchEntry or string && f is Grid);
         var point = e.GetPosition(Root);
         if (_openFolder is not null)
@@ -797,16 +1048,13 @@ public sealed class AppGridWindow : OverlayWindow
         }
         else if (cell?.Tag is LaunchEntry entry && _tiles.TryGetValue(entry, out var parts))
         {
-            _press = new Press { Start = point, Entry = entry, Icon = parts.IconHost, Fixed = _frequent.Contains(entry) };
-        }
-        else if (ReferenceEquals(source, _strip) || ReferenceEquals(source, _host))
-        {
-            _press = new Press { Start = point };
+            _press = new Press { Start = point, Entry = entry, Icon = parts.IconHost, Fixed = Filtered || entry.IsFolder || _frequent.Contains(entry) };
         }
         else
         {
             return;
         }
+        Select(null);
         if (_press.Icon is not null) _press.Icon.Opacity = 0.65;
         Root.CaptureMouse();
     }
@@ -821,27 +1069,8 @@ public sealed class AppGridWindow : OverlayWindow
             DragTo(point);
             return;
         }
-        var moved = point - _press.Start;
-        if (_press.Swiping)
-        {
-            _stripShift.X = _press.SwipeFrom + moved.X;
-            return;
-        }
-        if (moved.Length < DragThreshold) return;
-        if (_press.Entry is not null || _press.FolderApp is not null)
-        {
-            // While searching the results are a view, not the arrangement, so icons stay put.
-            if (Searching || _press.Fixed) return;
-            StartDrag(point);
-        }
-        else if (Math.Abs(moved.X) > Math.Abs(moved.Y))
-        {
-            _press.Swiping = true;
-            var current = _stripShift.X;
-            _stripShift.BeginAnimation(TranslateTransform.XProperty, null);
-            _stripShift.X = current;
-            _press.SwipeFrom = current - moved.X;
-        }
+        if ((point - _press.Start).Length < DragThreshold || _press.Fixed) return;
+        if (_press.Entry is not null || _press.FolderApp is not null) StartDrag(point);
     }
 
     private void OnPressUp(object sender, MouseButtonEventArgs e)
@@ -851,132 +1080,83 @@ public sealed class AppGridWindow : OverlayWindow
         _press = null;
         if (Root.IsMouseCaptured) Root.ReleaseMouseCapture();
         if (press.Icon is not null) press.Icon.Opacity = 1;
+        e.Handled = true;
         if (_drag is not null)
         {
-            e.Handled = true;
             LetGo();
             return;
         }
-        if (press.Swiping)
-        {
-            e.Handled = true;
-            var moved = e.GetPosition(Root).X - press.Start.X;
-            GoTo(Math.Abs(moved) > Width * 0.12 ? _page - Math.Sign(moved) : _page);
-            return;
-        }
-        if (press.Entry is not null)
-        {
-            e.Handled = true;
-            Open(press.Entry);
-        }
-        else if (press.FolderApp is not null)
-        {
-            e.Handled = true;
-            Launch(press.FolderApp);
-        }
-        else if ((e.GetPosition(Root) - press.Start).Length >= DragThreshold)
-        {
-            // An up-and-down drag on the empty page is not a click.
-            e.Handled = true;
-        }
-        // A plain click on the empty page goes on to the overlay, which closes.
+        if ((e.GetPosition(Root) - press.Start).Length >= DragThreshold * 2) return;
+        if (press.Entry is not null) Open(press.Entry);
+        else if (press.FolderApp is not null) Launch(press.FolderApp);
     }
 
     private void CancelPress()
     {
         if (_press?.Icon is not null) _press.Icon.Opacity = 1;
-        var swiping = _press?.Swiping == true;
         _press = null;
         if (_drag is not null) LetGo();
-        else if (swiping) GoTo(_page);
     }
 
-    private void Wheel(double towardsNext)
-    {
-        if (_openFolder is not null || _drag is not null) return;
-        var now = DateTime.UtcNow;
-        // A touchpad sends a stream of small steps that keeps going after the fingers lift:
-        // one page per gesture, then wait for the stream to stop.
-        if (now < _wheelLock)
-        {
-            if (now - _wheelLast < TimeSpan.FromMilliseconds(120)) _wheelLock = Min(now.AddMilliseconds(120), _wheelLock.AddMilliseconds(60));
-            _wheelLast = now;
-            return;
-        }
-        if (now - _wheelLast > TimeSpan.FromMilliseconds(400)) _wheel = 0;
-        _wheelLast = now;
-        _wheel += towardsNext;
-        if (Math.Abs(_wheel) < 100) return;
-        var step = Math.Sign(_wheel);
-        _wheel = 0;
-        _wheelLock = now.AddMilliseconds(380);
-        if (_page + step >= 0 && _page + step < _pageCount) GoTo(_page + step);
-    }
-
-    private static DateTime Min(DateTime a, DateTime b) => a < b ? a : b;
+    // ───────────────────────── Keyboard ─────────────────────────
 
     /// <summary>
-    /// The arrow keys move a highlight over the icons (left and right only while the search field is
-    /// empty, so they still move the cursor in typed text) and Enter opens it; Page Up / Down turn pages.
+    /// The arrow keys move a highlight over the icons (left and right only while the search field is empty, so they
+    /// still move the cursor in typed text) and Enter opens it; Page Up / Down scroll; Tab and Shift+Tab change the
+    /// category.
     /// </summary>
     private void OnKey(object sender, KeyEventArgs e)
     {
         if (_openFolder is not null || _drag is not null) return;
         var typing = _box.Text.Length > 0;
-        var move = e.Key switch
+        switch (e.Key)
         {
-            Key.Left when !typing => -1,
-            Key.Right when !typing => 1,
-            Key.Up => -(int)_cols,
-            Key.Down => (int)_cols,
-            _ => 0
-        };
-        if (move != 0)
+            case Key.Left when !typing: Step(-1); break;
+            case Key.Right when !typing: Step(1); break;
+            case Key.Up: Vertical(-1); break;
+            case Key.Down: Vertical(1); break;
+            case Key.PageDown: ScrollTo(_scroll + ViewHeight * 0.9); break;
+            case Key.PageUp: ScrollTo(_scroll - ViewHeight * 0.9); break;
+            case Key.Tab: NextCategory((Keyboard.Modifiers & ModifierKeys.Shift) != 0 ? -1 : 1); break;
+            default: return;
+        }
+        e.Handled = true;
+    }
+
+    private LaunchEntry? FirstInView() => _order.FirstOrDefault(entry => _slots[entry].Y >= _scroll - 1) ?? _order.FirstOrDefault();
+
+    private void Step(int move)
+    {
+        if (_order.Count == 0) return;
+        var at = _selected is null ? -1 : _order.IndexOf(_selected);
+        Select(at < 0 ? FirstInView() : _order[Math.Clamp(at + move, 0, _order.Count - 1)]);
+    }
+
+    /// <summary>Up and down go to the nearest icon in the row above or below (the rows above and below the line differ in length).</summary>
+    private void Vertical(int move)
+    {
+        if (_order.Count == 0) return;
+        if (_selected is null || !_slots.TryGetValue(_selected, out var current))
         {
-            e.Handled = true;
-            MoveSelection(move);
+            Select(FirstInView());
             return;
         }
-        var step = e.Key switch
-        {
-            Key.PageDown => 1,
-            Key.PageUp => -1,
-            _ => 0
-        };
-        if (step == 0) return;
-        e.Handled = true;
-        GoTo(_page + step);
+        var rows = _order.Select(entry => _slots[entry].Y).Distinct().OrderBy(y => y).ToList();
+        var row = rows.IndexOf(current.Y) + move;
+        if (row < 0 || row >= rows.Count) return;
+        Select(_order.Where(entry => _slots[entry].Y == rows[row]).MinBy(entry => Math.Abs(_slots[entry].X - current.X)));
     }
 
-    private void MoveSelection(int move)
-    {
-        var list = Display();
-        if (list.Count == 0) return;
-        var at = _selected is null ? -1 : list.IndexOf(_selected);
-        // The first press picks the first icon of the page in view.
-        var index = at < 0 ? Math.Min(_page * PerPage, list.Count - 1) : Math.Clamp(at + move, 0, list.Count - 1);
-        // Empty slots (the end of the row of most used apps) are stepped over.
-        var direction = move < 0 ? -1 : 1;
-        var found = index;
-        while (found >= 0 && found < list.Count && list[found] is null) found += direction;
-        if (found < 0 || found >= list.Count)
-        {
-            found = index;
-            while (found >= 0 && found < list.Count && list[found] is null) found -= direction;
-        }
-        if (found < 0 || found >= list.Count || list[found] is not { } entry) return;
-        Select(entry, found / PerPage);
-    }
-
-    /// <summary>Highlights the icon the keyboard is on (turning to its page), or none.</summary>
-    private void Select(LaunchEntry? entry, int page = -1)
+    /// <summary>Highlights the icon the keyboard is on (scrolling it into view), or none.</summary>
+    private void Select(LaunchEntry? entry)
     {
         if (_selected is not null && !ReferenceEquals(_selected, entry) && !ReferenceEquals(_selected, _folderTarget)
             && _tiles.TryGetValue(_selected, out var old))
             Highlight(old, false);
         _selected = entry;
-        if (entry is null) return;
-        if (page >= 0 && page != _page) GoTo(page);
+        if (entry is null || !_slots.TryGetValue(entry, out var at)) return;
+        if (at.Y < _scroll) ScrollTo(at.Y - 8);
+        else if (at.Y + _cellH > _scroll + ViewHeight) ScrollTo(at.Y + _cellH - ViewHeight + 8);
         if (_tiles.TryGetValue(entry, out var parts)) Highlight(parts, true);
     }
 
@@ -988,7 +1168,7 @@ public sealed class AppGridWindow : OverlayWindow
     /// <summary>Set by the dock: whether a program file is already pinned.</summary>
     public static Func<string, bool>? IsPinned { get; set; }
 
-    /// <summary>A right click on an icon: open it, as administrator, its file location, pin it; on a folder: open or ungroup it.</summary>
+    /// <summary>A right click on an icon: open it, as administrator, its file location, pin it, its category; on a folder: open or ungroup it.</summary>
     private void OnMenu(object sender, MouseButtonEventArgs e)
     {
         if (_drag is not null) return;
@@ -1007,7 +1187,7 @@ public sealed class AppGridWindow : OverlayWindow
         if (cell.Tag is LaunchEntry { IsFolder: true } folder)
         {
             Add("AppGridOpenFolder", () => OpenFolder(folder));
-            if (!Searching && _items.Contains(folder)) Add("AppGridUngroup", () => Ungroup(folder));
+            if (_items.Contains(folder)) Add("AppGridUngroup", () => Ungroup(folder));
         }
         else if (((cell.Tag as LaunchEntry)?.App ?? (cell.Tag as string)) is { } id && _known.TryGetValue(id, out var app))
         {
@@ -1031,6 +1211,21 @@ public sealed class AppGridWindow : OverlayWindow
                     Add(pinned ? "AppGridPinned" : "AppGridPin", () => pin(target, app.Name), !pinned);
                 }
             }
+            // The category is a guess from the app's name; it can be put right here.
+            var current = AppCategories.Of(app);
+            var category = new MenuItem { Header = L("Kategori", "Category") };
+            foreach (var choice in AppCategories.Order)
+            {
+                var item = new MenuItem { Header = AppCategories.Name(choice), IsChecked = choice == current };
+                item.Click += (_, _) =>
+                {
+                    AppCategories.Choose(app.Id, choice);
+                    BuildChips();
+                    Refill(keepScroll: true);
+                };
+                category.Items.Add(item);
+            }
+            menu.Items.Add(category);
         }
         else
         {
@@ -1040,7 +1235,7 @@ public sealed class AppGridWindow : OverlayWindow
         menu.IsOpen = true;
     }
 
-    /// <summary>A folder's apps go back onto the pages where the folder was.</summary>
+    /// <summary>A folder's apps go back among the others.</summary>
     private void Ungroup(LaunchEntry folder)
     {
         var index = _items.IndexOf(folder);
@@ -1049,7 +1244,7 @@ public sealed class AppGridWindow : OverlayWindow
         _items.RemoveAt(index);
         _items.InsertRange(index, folder.Apps!.Select(id => new LaunchEntry { App = id }));
         Forget(folder);
-        Refill();
+        Refill(keepScroll: true);
         Save();
     }
 
@@ -1090,11 +1285,11 @@ public sealed class AppGridWindow : OverlayWindow
         else
         {
             var entry = press.Entry!;
-            var origin = _tiles[entry].Element.TranslatePoint(new Point(), Root);
-            _others = _items.Where(x => !ReferenceEquals(x, entry)).ToList();
-            _dropIndex = _items.IndexOf(entry);
+            var tile = _tiles[entry].Element;
+            var origin = tile.TranslatePoint(new Point(), Root);
             _drag = new Drag { Entry = entry, Ghost = Ghost(entry), Grab = point - origin };
-            Arrange(false);
+            // Its place stays, faint, until it lands somewhere.
+            tile.Opacity = 0.25;
         }
         DragTo(point);
     }
@@ -1137,8 +1332,8 @@ public sealed class AppGridWindow : OverlayWindow
             LeaveFolder();
         }
 
-        // Holding the icon at the left or right edge turns the page.
-        var edge = point.X < 36 ? -1 : point.X > Width - 36 ? 1 : 0;
+        var inHost = Root.TranslatePoint(point, _host);
+        var edge = inHost.Y < 48 ? -1 : inHost.Y > _host.ActualHeight - 48 ? 1 : 0;
         if (edge != _edgeDirection)
         {
             _edgeDirection = edge;
@@ -1146,28 +1341,21 @@ public sealed class AppGridWindow : OverlayWindow
             if (edge != 0) _edgeTimer.Start();
         }
 
-        var gx = point.X - _gridLeft;
-        var gy = point.Y - _gridTop;
-        var col = Math.Clamp((int)Math.Floor(gx / _cellW), 0, (int)_cols - 1);
-        var row = Math.Clamp((int)Math.Floor(gy / _cellH), 0, (int)_rows - 1);
-        // The row of most used apps is not a place to drop on.
-        var slotIndex = Math.Max(Lead, _page * PerPage + row * (int)_cols + col);
-        var display = Display();
+        // Over the middle of another icon (or a folder): a folder would be made there.
+        var inStrip = Root.TranslatePoint(point, _strip);
         LaunchEntry? target = null;
-        if (gx >= 0 && gx < _cols * _cellW && gy >= 0 && gy < _rows * _cellH && slotIndex < display.Count && display[slotIndex] is { } under && !drag.Entry.IsFolder)
+        var iconMiddle = (_icon + 12 * _k) / 2;
+        foreach (var entry in _order)
         {
-            // Over the middle of another icon: a folder would be made there.
-            var iconTop = (_cellH - (_icon * 1.24 + 20)) / 2;
-            var cx = (col + 0.5) * _cellW;
-            var cy = row * _cellH + iconTop + _icon * 0.62;
-            if (Math.Abs(gx - cx) < _icon * 0.42 && Math.Abs(gy - cy) < _icon * 0.42) target = under;
+            if (ReferenceEquals(entry, drag.Entry) || string.Equals(entry.App, drag.Entry.App, StringComparison.OrdinalIgnoreCase)) continue;
+            var at = _slots[entry];
+            if (Math.Abs(inStrip.X - (at.X + _cellW / 2)) < _icon * 0.5 && Math.Abs(inStrip.Y - (at.Y + iconMiddle)) < _icon * 0.5)
+            {
+                target = entry;
+                break;
+            }
         }
         SetFolderTarget(target);
-        if (target is not null) return;
-        var index = Math.Min(slotIndex - Lead, _others.Count);
-        if (index == _dropIndex) return;
-        _dropIndex = index;
-        Arrange(true);
     }
 
     private void SetFolderTarget(LaunchEntry? target)
@@ -1187,19 +1375,6 @@ public sealed class AppGridWindow : OverlayWindow
         scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(to, TimeSpan.FromMilliseconds(160)) { EasingFunction = Motion.Out });
     }
 
-    private void FlipWhileDragging()
-    {
-        if (_drag is null || _edgeDirection == 0)
-        {
-            _edgeTimer.Stop();
-            return;
-        }
-        var next = _page + _edgeDirection;
-        if (next < 0 || next >= _pageCount) return;
-        GoTo(next);
-        DragTo(_lastPoint);
-    }
-
     private void LetGo()
     {
         var drag = _drag!;
@@ -1215,7 +1390,7 @@ public sealed class AppGridWindow : OverlayWindow
             ArrangeFolder(true);
             Land(drag.Ghost, _folderTiles.TryGetValue(drag.Entry.App!, out var inFolder) ? inFolder.Element : null);
             Forget(drag.Folder);
-            Arrange(false);
+            Refill(keepScroll: true);
             Save();
             return;
         }
@@ -1223,30 +1398,37 @@ public sealed class AppGridWindow : OverlayWindow
         if (_folderTarget is { } target)
         {
             SetFolderTarget(null);
-            if (target.IsFolder)
+            // The most used row shows copies; the folder is made where the app itself stands.
+            var real = target.IsFolder ? target
+                : _items.FirstOrDefault(e => !e.IsFolder && string.Equals(e.App, target.App, StringComparison.OrdinalIgnoreCase))
+                ?? _items.FirstOrDefault(e => e.IsFolder && e.Apps!.Contains(target.App!, StringComparer.OrdinalIgnoreCase))
+                ?? target;
+            _items.Remove(drag.Entry);
+            Forget(drag.Entry);
+            if (real.IsFolder)
             {
-                target.Apps!.Add(drag.Entry.App!);
+                real.Apps!.Add(drag.Entry.App!);
+                Forget(real);
             }
             else
             {
-                // App on app: the two become a folder where the one underneath was.
-                var folder = new LaunchEntry { Folder = UiText.Get("AppGridFolder"), Apps = [target.App!, drag.Entry.App!] };
-                _others[_others.IndexOf(target)] = folder;
-                target = folder;
+                // App on app: the two become a folder (folders stand on top).
+                var folder = new LaunchEntry { Folder = UiText.Get("AppGridFolder"), Apps = [real.App!, drag.Entry.App!] };
+                var at = _items.IndexOf(real);
+                if (at >= 0) _items[at] = folder;
+                else _items.Add(folder);
+                Forget(real);
+                real = folder;
             }
-            _items = _others;
-            Forget(target);
-            Arrange(true);
-            Land(drag.Ghost, _tiles.TryGetValue(target, out var into) ? into.Element : null, shrink: true);
+            Refill(keepScroll: true);
+            Land(drag.Ghost, _tiles.TryGetValue(real, out var into) ? into.Element : null, shrink: true);
             Save();
             return;
         }
 
-        _items = [.. _others];
-        _items.Insert(Math.Clamp(_dropIndex, 0, _items.Count), drag.Entry);
-        Refill();
+        // Nowhere in particular: back to its place.
+        Refill(keepScroll: true);
         Land(drag.Ghost, _tiles.TryGetValue(drag.Entry, out var placed) ? placed.Element : null);
-        Save();
     }
 
     /// <summary>The ghost glides into the tile's place (or shrinks into a folder) and the real tile shows again.</summary>
@@ -1258,12 +1440,8 @@ public sealed class AppGridWindow : OverlayWindow
             return;
         }
         if (!shrink) tile.Opacity = 0;
-        // The new tile is not laid out yet, so its place comes from its canvas position:
-        // on the pages, where the page will stop sliding; in a folder, inside the folder's grid.
         var at = new Point(Canvas.GetLeft(tile), Canvas.GetTop(tile));
-        var target = ReferenceEquals(tile.Parent, _strip)
-            ? new Point(at.X - _page * Width, at.Y)
-            : tile.Parent is Canvas grid ? grid.TranslatePoint(at, Root) : at;
+        var target = tile.Parent is Canvas canvas ? canvas.TranslatePoint(at, Root) : at;
         var time = TimeSpan.FromMilliseconds(220);
         var left = new DoubleAnimation(target.X, time) { EasingFunction = Motion.Out };
         left.Completed += (_, _) =>
@@ -1280,7 +1458,7 @@ public sealed class AppGridWindow : OverlayWindow
         if (shrink) ghost.BeginAnimation(OpacityProperty, new DoubleAnimation(0, time));
     }
 
-    /// <summary>Drops a tile so it is drawn again (a folder whose apps changed).</summary>
+    /// <summary>Drops a tile so it is drawn again (a folder whose apps changed) or because it went out of view.</summary>
     private void Forget(LaunchEntry entry)
     {
         if (!_tiles.TryGetValue(entry, out var tile)) return;
@@ -1290,7 +1468,6 @@ public sealed class AppGridWindow : OverlayWindow
 
     private void Save()
     {
-        // The search results are a view; only the real arrangement is written.
         LaunchStore.Save(_items.Select(e => e.IsFolder ? new LaunchEntry { Folder = e.Folder, Apps = [.. e.Apps!] } : new LaunchEntry { App = e.App }).ToList());
     }
 
@@ -1298,6 +1475,7 @@ public sealed class AppGridWindow : OverlayWindow
 
     private void OpenFolder(LaunchEntry folder)
     {
+        Select(null);
         _openFolder = folder;
         _folderLayer.Children.Clear();
         _folderTiles.Clear();
@@ -1330,7 +1508,7 @@ public sealed class AppGridWindow : OverlayWindow
             if (text.Length == 0 || text == NameOf(folder)) return;
             folder.Folder = text;
             Forget(folder);
-            Arrange(false);
+            Realize();
             Save();
         }
         name.LostKeyboardFocus += (_, _) => Rename();
@@ -1351,10 +1529,10 @@ public sealed class AppGridWindow : OverlayWindow
         _folderPanel = new Border
         {
             Child = column,
-            Background = Ui.Solid("#C2303236"),
+            Background = Ui.Solid("#E62A2C30"),
             BorderBrush = FolderEdge,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(30),
+            CornerRadius = new CornerRadius(30 * _k),
             Padding = new Thickness(24, 22, 24, 18),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
@@ -1366,7 +1544,7 @@ public sealed class AppGridWindow : OverlayWindow
         _folderLayer.Children.Add(_folderPanel);
         ArrangeFolder(false);
         _folderLayer.Visibility = Visibility.Visible;
-        // Typing would otherwise go on filtering the pages behind the folder.
+        // Typing would otherwise go on filtering the panel behind the folder.
         _folderPanel.Focusable = true;
         _folderPanel.FocusVisualStyle = null;
         Dispatcher.BeginInvoke(() => _folderPanel?.Focus(), DispatcherPriority.Loaded);
@@ -1376,7 +1554,7 @@ public sealed class AppGridWindow : OverlayWindow
         scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1, time) { EasingFunction = Motion.Out });
         scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1, time) { EasingFunction = Motion.Out });
         _folderPanel.BeginAnimation(OpacityProperty, new DoubleAnimation(1, time) { EasingFunction = Motion.Out });
-        _host.BeginAnimation(OpacityProperty, new DoubleAnimation(0.45, time));
+        _panel.BeginAnimation(OpacityProperty, new DoubleAnimation(0.45, time));
     }
 
     private void CloseFolder(bool quick = false)
@@ -1401,7 +1579,7 @@ public sealed class AppGridWindow : OverlayWindow
         scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.9, time) { EasingFunction = Motion.In });
         panel.BeginAnimation(OpacityProperty, fade);
         _folderLayer.Children[0].BeginAnimation(OpacityProperty, new DoubleAnimation(0, time));
-        _host.BeginAnimation(OpacityProperty, new DoubleAnimation(1, time));
+        _panel.BeginAnimation(OpacityProperty, new DoubleAnimation(1, time));
     }
 
     /// <summary>Lays out the apps of the open folder; while one is dragged, a gap stands where it would land.</summary>
@@ -1464,8 +1642,8 @@ public sealed class AppGridWindow : OverlayWindow
     }
 
     /// <summary>
-    /// The dragged app left the folder panel: it comes out of the folder, the folder closes and
-    /// the drag carries on over the pages, starting just after the folder.
+    /// The dragged app left the folder panel: it comes out of the folder (back among the other apps), the folder
+    /// closes and the drag carries on over the panel, where it can still be dropped on another icon.
     /// </summary>
     private void LeaveFolder()
     {
@@ -1474,20 +1652,16 @@ public sealed class AppGridWindow : OverlayWindow
         drag.Folder = null;
         folder.Apps = [.. _folderOthers];
         var at = _items.IndexOf(folder);
-        if (folder.Apps.Count == 1)
+        Forget(folder);
+        if (folder.Apps.Count == 1 && at >= 0)
         {
             // A folder of one is just that app again.
-            Forget(folder);
             _items[at] = new LaunchEntry { App = folder.Apps[0] };
         }
-        else
-        {
-            Forget(folder);
-        }
+        _items.Insert(at < 0 ? _items.Count : at + 1, drag.Entry);
         CloseFolder(quick: true);
-        _others = [.. _items];
-        _dropIndex = at + 1;
-        Arrange(false);
+        Refill(keepScroll: true);
+        if (_tiles.TryGetValue(drag.Entry, out var placed)) placed.Element.Opacity = 0.25;
         Save();
     }
 }

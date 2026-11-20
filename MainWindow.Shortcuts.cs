@@ -316,6 +316,9 @@ public partial class MainWindow
         if (dialog.ShowDialog() == true) AddShortcuts(dialog.FolderNames);
     }
 
+    /// <summary>Pins files or folders chosen in the Files window.</summary>
+    internal void PinToDock(IEnumerable<string> paths) => AddShortcuts(paths);
+
     /// <param name="displayName">The name to show (an app pinned from the app screen keeps its Start menu name).</param>
     private void AddShortcuts(IEnumerable<string> paths, string? displayName = null)
     {

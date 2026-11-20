@@ -30,7 +30,7 @@ public sealed record ProviderUsage(
 /// ChatGPT: reads the latest rate-limit snapshot Codex CLI writes into its local session logs (no network).
 /// Tokens are only read from disk and sent to their own provider; they are never stored or logged.
 /// </summary>
-public sealed class AiUsageService
+public sealed partial class AiUsageService
 {
     public const string ClaudeId = "claude";
     public const string CodexId = "chatgpt";
@@ -44,6 +44,8 @@ public sealed class AiUsageService
     {
         Cached = LastKnown();
         _claude = Cached.FirstOrDefault(u => u.Provider == ClaudeId);
+        _gemini = Cached.FirstOrDefault(u => u.Provider == GeminiId);
+        _openCode = Cached.FirstOrDefault(u => u.Provider == OpenCodeId);
     }
 
     /// <summary>
@@ -59,6 +61,10 @@ public sealed class AiUsageService
         if (claude is not null) results.Add(claude);
         var codex = await Task.Run(ReadCodex, token).ConfigureAwait(false);
         if (codex is not null) results.Add(codex);
+        var gemini = GetGeminiAsync(token);
+        var openCode = GetOpenCodeAsync(token);
+        if (await gemini.ConfigureAwait(false) is { } g) results.Add(g);
+        if (await openCode.ConfigureAwait(false) is { } o) results.Add(o);
         SaveLastKnown(results);
         return results;
     }

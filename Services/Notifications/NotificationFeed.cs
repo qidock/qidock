@@ -343,19 +343,50 @@ public static class NotificationApps
         return result;
     }
 
-    /// <summary>An app's icon at the given pixel size, not cached (the launcher loads them while it is open).</summary>
-    public static BitmapSource? LoadIcon(string appId, int size)
+    /// <summary>
+    /// An app's icon at the given pixel size, not cached (the launcher loads them while it is open). With
+    /// <paramref name="exact"/> the picture is brought to exactly that size here (smoothly, on the calling thread),
+    /// so nothing scales it again while it is drawn.
+    /// </summary>
+    public static BitmapSource? LoadIcon(string appId, int size, bool exact = false)
     {
         if (SHCreateItemFromParsingName(@"shell:AppsFolder\" + appId, 0, typeof(IShellItem).GUID, out var item) != 0 || item is null) return null;
-        try { return ImageOf(item, size); }
+        try { return ImageOf(item, size, exact); }
         finally { Marshal.ReleaseComObject(item); }
     }
 
-    private static BitmapSource? ImageOf(IShellItem item, int size)
+    private static BitmapSource? ImageOf(IShellItem item, int size, bool exact = false)
     {
+        // "Bigger is fine": Windows hands over the icon's own largest picture, scaled here afterwards.
         if (item is not IShellItemImageFactory factory || factory.GetImage(new NativeSize(size, size), 0x1 | 0x4 /* bigger ok, icon only */, out var bitmap) != 0 || bitmap == 0) return null;
-        try { return FromHBitmap(bitmap); }
+        BitmapSource? image;
+        try { image = FromHBitmap(bitmap); }
         finally { DeleteObject(bitmap); }
+        return exact && image is not null ? Fit(image, size) : image;
+    }
+
+    /// <summary>
+    /// The picture brought to <paramref name="size"/> pixels, worked out at once: made smaller by averaging (Fant),
+    /// made larger by blending neighbours (averaging would only repeat pixels and show them as squares).
+    /// </summary>
+    private static BitmapSource Fit(BitmapSource image, int size)
+    {
+        var scale = (double)size / Math.Max(image.PixelWidth, image.PixelHeight);
+        if (Math.Abs(scale - 1) < 0.001) return image;
+        if (scale < 1)
+        {
+            var smaller = new CachedBitmap(new TransformedBitmap(image, new System.Windows.Media.ScaleTransform(scale, scale)), BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
+            smaller.Freeze();
+            return smaller;
+        }
+        int width = (int)Math.Round(image.PixelWidth * scale), height = (int)Math.Round(image.PixelHeight * scale);
+        var visual = new System.Windows.Media.DrawingVisual();
+        System.Windows.Media.RenderOptions.SetBitmapScalingMode(visual, System.Windows.Media.BitmapScalingMode.Linear);
+        using (var dc = visual.RenderOpen()) dc.DrawImage(image, new System.Windows.Rect(0, 0, width, height));
+        var larger = new RenderTargetBitmap(width, height, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+        larger.Render(visual);
+        larger.Freeze();
+        return larger;
     }
 
     private static string Fallback(string appId)

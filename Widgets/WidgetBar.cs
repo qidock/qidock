@@ -21,6 +21,11 @@ public sealed class WidgetBar : StackPanel, IDisposable
     private string _signature = "";
 
     public event EventHandler? LayoutInvalidated;
+
+    /// <summary>A tile opens out (true) or has closed again (false).</summary>
+    public event EventHandler<bool>? WidgetExpanding;
+
+    private readonly HashSet<DockWidget> _expanding = [];
     public event EventHandler? SettingsRequested;
 
     /// <summary>Raised in edit mode with the new widget settings (order or hidden list changed).</summary>
@@ -109,6 +114,13 @@ public sealed class WidgetBar : StackPanel, IDisposable
         foreach (var widget in all)
         {
             widget.LayoutChanged += (_, _) => LayoutInvalidated?.Invoke(this, EventArgs.Empty);
+            widget.Expanding += (_, on) =>
+            {
+                if (on) _expanding.Add(widget);
+                else _expanding.Remove(widget);
+                WidgetExpanding?.Invoke(this, on);
+                if (!on && _expanding.Count == 0) LayoutInvalidated?.Invoke(this, EventArgs.Empty);
+            };
             widget.SettingsRequested += (_, _) => SettingsRequested?.Invoke(this, EventArgs.Empty);
             widget.SettingsUpdateRequested += (_, change) => SettingsEdited?.Invoke(this, change(_settings));
             if (widget is ProfileWidget profile)
@@ -119,6 +131,7 @@ public sealed class WidgetBar : StackPanel, IDisposable
         }
         SizeChanged += (_, e) =>
         {
+            if (_expanding.Count > 0) return; // a tile opening out: the dock keeps its width meanwhile
             if (Math.Abs(e.NewSize.Width - e.PreviousSize.Width) > 0.5) LayoutInvalidated?.Invoke(this, EventArgs.Empty);
         };
     }
@@ -147,6 +160,7 @@ public sealed class WidgetBar : StackPanel, IDisposable
         if (IsEditing == editing) return;
         IsEditing = editing;
         ClosePopups();
+        foreach (var widget in _widgets.Values) widget.SetEditing(editing);
         _signature = "";
         Apply(_settings);
         EditingChanged?.Invoke(this, EventArgs.Empty);

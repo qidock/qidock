@@ -32,6 +32,7 @@ internal sealed class AppsWidget : DeskWidget
             DeskSize.Small => (2, 2, 52),
             DeskSize.Strip => (6, 1, 44),
             DeskSize.Medium => (5, 2, 50),
+            DeskSize.Tall => (2, 4, 54),
             _ => (4, 4, 54)
         };
         var apps = Apps.Take(columns * rows).ToList();
@@ -109,6 +110,7 @@ internal sealed class ActionsWidget : DeskWidget
             DeskSize.Mini => (3, 3, 40),
             DeskSize.Small => (4, 2, 48),
             DeskSize.Strip => (6, 6, 42),
+            DeskSize.Tall => (8, 2, 50),
             _ => (8, 4, 50)
         };
         var grid = new UniformGrid { Columns = columns };
@@ -475,6 +477,25 @@ internal sealed class TogglesWidget : DeskWidget
         var night = Toggle("IconMoon", Orange, () => Ui.Open("ms-settings:nightlight"), Desk.L("Gece ışığı", "Night light"));
         var focus = Toggle("IconBell", Purple, () => Ui.Open("ms-settings:quiethours"), Desk.L("Bildirimler / odak", "Notifications / focus"));
         var keyboard = Toggle("IconKeyboard", Secondary, () => Ui.Open("osk.exe"), Desk.L("Ekran klavyesi", "On-screen keyboard"));
+        if (Size == DeskSize.Tall)
+        {
+            // Upright: one switch per row with its name, as a phone's control centre.
+            var list = new UniformGrid { Columns = 1, Rows = 5 };
+            foreach (var (button, name) in new[]
+            {
+                (_wifi, "Wi-Fi"), (_bluetooth, "Bluetooth"), (night, Desk.L("Gece ışığı", "Night light")),
+                (focus, Desk.L("Odak", "Focus")), (keyboard, Desk.L("Klavye", "Keyboard"))
+            })
+            {
+                button.Width = button.Height = 44;
+                button.HorizontalAlignment = HorizontalAlignment.Left;
+                var row = Grid(columns: "Auto,*");
+                row.Children.Add(button);
+                row.Children.Add(At(Margin(T(name, 13, FontWeights.SemiBold), 11), 0, 1));
+                list.Children.Add(row);
+            }
+            return list;
+        }
         var grid = new UniformGrid { Columns = Size == DeskSize.Small ? 2 : 5, Rows = Size == DeskSize.Small ? 2 : 1 };
         grid.Children.Add(_wifi);
         grid.Children.Add(_bluetooth);

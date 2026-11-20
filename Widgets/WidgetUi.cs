@@ -40,6 +40,17 @@ public abstract class DockWidget : IDisposable
     public virtual void Dispose() => Stop();
 
     protected void RaiseLayoutChanged() => LayoutChanged?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>The dock is being edited (or no longer).</summary>
+    public virtual void SetEditing(bool editing) { }
+
+    /// <summary>
+    /// The tile opens out sideways for a moment (true) or has closed again (false). Meanwhile the dock keeps its
+    /// width: what stands after the tile slides out of the dock's end and comes back when it closes.
+    /// </summary>
+    public event EventHandler<bool>? Expanding;
+
+    protected void RaiseExpanding(bool expanding) => Expanding?.Invoke(this, expanding);
     protected void RequestSettings() => SettingsRequested?.Invoke(this, EventArgs.Empty);
 }
 
@@ -69,6 +80,11 @@ public sealed class WidgetPopup
     /// <summary>Any widget card opened (the bar hides its profile tabs so they do not cover it).</summary>
     public static event EventHandler? AnyOpened;
 
+    /// <summary>Any widget card or strip closed (a dock that hides itself may go now).</summary>
+    public static event EventHandler? AnyClosed;
+
+    internal static void RaiseAnyClosed() => AnyClosed?.Invoke(null, EventArgs.Empty);
+
     public WidgetPopup(FrameworkElement target)
     {
         _target = target;
@@ -97,6 +113,7 @@ public sealed class WidgetPopup
         {
             _outsideClickWatch.Stop();
             Closed?.Invoke(this, EventArgs.Empty);
+            AnyClosed?.Invoke(this, EventArgs.Empty);
         };
         // Keep the card centered above the tile when its size changes while open.
         _surface.SizeChanged += (_, _) =>
@@ -149,7 +166,11 @@ public sealed class WidgetPopup
                 Opened?.Invoke(this, EventArgs.Empty);
                 AnyOpened?.Invoke(this, EventArgs.Empty);
             };
-            sheet.SheetHidden += (_, _) => Closed?.Invoke(this, EventArgs.Empty);
+            sheet.SheetHidden += (_, _) =>
+            {
+                Closed?.Invoke(this, EventArgs.Empty);
+                AnyClosed?.Invoke(this, EventArgs.Empty);
+            };
         }
         _surface.Child = null;
         _sheet.Body = _content;

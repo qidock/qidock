@@ -29,6 +29,7 @@ public partial class MainWindow
         PreferControlCenterTile();
         BellToCorner();
         SecondBatchHidden();
+        ProfileToMenu();
         ApplyDockBell();
         _topBar = new TopBarWindow { Tabs = _widgetBar.ProfileStrip };
         _widgetBar.ProfileMenuRequested += (_, target) => ShowProfileMenu(target.Index, target.Anchor);
@@ -36,6 +37,8 @@ public partial class MainWindow
         _topBar.LiveChanged += (_, live) => _widgetBar.SetLive(live || WidgetsInDock && DockOnScreen);
         _topBar.MenuRequested += (_, _) => ShowDockMenu(PlacementMode.MousePoint, null);
         _topBar.SetPeekEnabled(_preferences.Current.TopBarPeek);
+        ApplyNotchBrowser();
+        ApplyDockGlass();
         _widgetBar.SetLive(false);
         ApplyWidgetPlacement();
         UpdateTopBarContent();
@@ -497,7 +500,9 @@ public partial class MainWindow
     private void ApplyWidgetHostTransform()
     {
         var matrix = Matrix.Identity;
-        matrix.Scale(_dockWidgetScale, _dockWidgetScale);
+        // In the dock the widget tiles grow with the dock's size, as the app icons do.
+        var grow = WidgetsInDock ? Services.TaskbarReplacementSession.Scale : 1;
+        matrix.Scale(_dockWidgetScale * grow, _dockWidgetScale * grow);
         if (Edge == Models.DockEdge.Top) matrix.Append(Services.DockGeometry.FrameToScreen(Models.DockEdge.Top));
         WidgetHost.LayoutTransform = matrix.IsIdentity ? Transform.Identity : new MatrixTransform(matrix);
     }
@@ -616,6 +621,63 @@ public partial class MainWindow
         {
             Widgets = options with { Hidden = Hide(options.Hidden), Profiles = profiles, LayoutRevision = 4 }
         });
+    }
+
+    /// <summary>Once: the profile tile leaves the bar; profiles are switched from the dock's menu.</summary>
+    private void ProfileToMenu()
+    {
+        var options = _preferences.Current.WidgetOptions;
+        if (options.LayoutRevision >= 5) return;
+        List<string> Hide(IReadOnlyList<string>? hidden) => (hidden ?? []).Append(Models.WidgetIds.Profile).Distinct().ToList();
+        var profiles = options.EffectiveProfiles.Select(profile => profile with { Hidden = Hide(profile.Hidden) }).ToList();
+        SavePreferences(_preferences.Current with
+        {
+            Widgets = options with { Hidden = Hide(options.Hidden), Profiles = profiles, LayoutRevision = 5 }
+        });
+    }
+
+    /// <summary>"Profil" in the dock's menu: switch, add, rename or remove the widget profiles.</summary>
+    private MenuItem ProfileMenu(Models.WidgetSettings options)
+    {
+        var profiles = options.EffectiveProfiles;
+        var active = options.EffectiveActiveProfile;
+        var root = Item(Services.UiText.Get("MenuProfile"), "IconPerson");
+        for (var i = 0; i < profiles.Count; i++)
+        {
+            var index = i;
+            var item = Item(profiles[i].Name, null, i == active);
+            if (i < 9) item.InputGestureText = "Ctrl+Alt+Shift+" + (i + 1);
+            item.Click += (_, _) =>
+            {
+                var now = _preferences.Current.WidgetOptions;
+                if (index == now.EffectiveActiveProfile || index >= now.EffectiveProfiles.Count) return;
+                SaveWidgetOptions(now.SwitchProfile(index));
+                Widgets.Ui.ShowHud("IconPerson", now.EffectiveProfiles[index].Name);
+            };
+            root.Items.Add(item);
+        }
+        root.Items.Add(new Separator());
+        var add = Item(Services.UiText.Get("ProfileAdd"), "IconPlus");
+        add.Click += (_, _) =>
+        {
+            var now = _preferences.Current.WidgetOptions;
+            SaveWidgetOptions(now.AddProfile(Services.UiText.Format("ProfileNew", now.EffectiveProfiles.Count + 1)));
+        };
+        root.Items.Add(add);
+        var rename = Item(Services.UiText.Get("ProfileRename"), "IconEdit");
+        foreach (var key in new[] { "ProfileDefault", "ProfileWork", "ProfileHome", "ProfileFocus", "ProfileGame", "ProfileSchool", "ProfileCreative", "ProfileTools" })
+        {
+            var name = Services.UiText.Get(key);
+            var item = Item(name, null, profiles[active].Name == name);
+            item.Click += (_, _) => SaveWidgetOptions(_preferences.Current.WidgetOptions.RenameProfile(active, name));
+            rename.Items.Add(item);
+        }
+        root.Items.Add(rename);
+        var remove = Item(Services.UiText.Get("ProfileRemove"), "IconClose");
+        remove.IsEnabled = profiles.Count > 1;
+        remove.Click += (_, _) => SaveWidgetOptions(_preferences.Current.WidgetOptions.RemoveProfile(active));
+        root.Items.Add(remove);
+        return root;
     }
 
     private void ShowProfileMenu(int index, FrameworkElement anchor)

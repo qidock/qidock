@@ -99,6 +99,7 @@ public partial class MainWindow
             widgets.Items.Add(item);
         }
         menu.Items.Add(widgets);
+        menu.Items.Add(ProfileMenu(options));
 
 
         var edit = Item(UiText.Get(_widgetBar.IsEditing ? "MenuEditDone" : "MenuEditDock"), "IconEdit");
@@ -117,6 +118,10 @@ public partial class MainWindow
         hint.IsEnabled = false;
         shortcuts.Items.Add(hint);
         menu.Items.Add(shortcuts);
+
+        var files = Item(DesktopWidgets.Desk.L("Dosyalar (Alt+Shift+E)", "Files (Alt+Shift+E)"), "IconFolderOpen");
+        files.Click += (_, _) => Files.FilesWindow.Open();
+        menu.Items.Add(files);
 
         var desktopWidgets = Item(DesktopWidgets.Desk.L("Masaüstüne widget ekle…", "Add desktop widgets…"), "IconApps");
         desktopWidgets.Click += (_, _) => ShowDesktopWidgetGallery();
@@ -146,6 +151,15 @@ public partial class MainWindow
             position.Items.Add(item);
         }
         menu.Items.Add(position);
+
+        var size = Item(UiText.Get("MenuDockSize"), "IconMaximize");
+        foreach (var (value, key) in new[] { (1.0, "DockSizeNormal"), (1.15, "DockSizeLarge"), (1.3, "DockSizeLarger"), (1.45, "DockSizeHuge") })
+        {
+            var item = Item(UiText.Get(key), null, Math.Abs(current.DockScale - value) < 0.01);
+            item.Click += (_, _) => SavePreferences(_preferences.Current with { DockScale = value });
+            size.Items.Add(item);
+        }
+        menu.Items.Add(size);
 
         var autoHide = Item(UiText.Get("MenuAutoHide"), "IconDock");
         foreach (var (value, key) in new[] { (AutoHideMode.Disabled, "MenuAutoHideOff"), (AutoHideMode.Smart, "MenuAutoHideSmart"), (AutoHideMode.Always, "MenuAutoHideAlways") })
@@ -182,6 +196,14 @@ public partial class MainWindow
         peek.IsEnabled = current.WidgetPlacement == WidgetPlacement.TopBar;
         menu.Items.Add(peek);
 
+        var notch = Item(UiText.Get("MenuNotchBrowser"), "IconGlobe", current.NotchBrowser);
+        notch.Click += (_, _) => SavePreferences(_preferences.Current with { NotchBrowser = !_preferences.Current.NotchBrowser });
+        menu.Items.Add(notch);
+
+        var glass = Item(UiText.Get("MenuDockGlass"), "IconSparkle", current.DockGlass);
+        glass.Click += (_, _) => SavePreferences(_preferences.Current with { DockGlass = !_preferences.Current.DockGlass });
+        menu.Items.Add(glass);
+
         var genie = Item(UiText.Get("GenieEffect"), "IconSparkle", current.GenieEffectEnabled);
         genie.Click += (_, _) => SavePreferences(_preferences.Current with { GenieEffectEnabled = !_preferences.Current.GenieEffectEnabled });
         genie.IsEnabled = current.AnimationsEnabled; // the effect needs animations; on without them it would do nothing
@@ -191,6 +213,9 @@ public partial class MainWindow
         var settings = Item(UiText.Get("Settings"), "IconSettings");
         settings.Click += OpenSettings_Click;
         menu.Items.Add(settings);
+        var update = Item(UiText.Format("UpdateMenu", Updater.Current), "IconRotate");
+        update.Click += (_, _) => CheckForUpdates_Click();
+        menu.Items.Add(update);
         menu.Items.Add(new Separator());
         var exit = Item(UiText.Get("Exit"), "IconExit");
         exit.Click += ExitQiDock_Click;

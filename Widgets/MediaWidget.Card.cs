@@ -75,8 +75,10 @@ public sealed partial class MediaWidget
             };
             _popup.Closed += (_, _) =>
             {
+                Flip(animate: false); // opens on the song again next time
                 CloseAudio();
                 UpdateProgressTimer();
+                if (_idle && !_editing) SetVisible(false); // the music stopped while the card was open
             };
         }
         FillCard();
@@ -153,7 +155,7 @@ public sealed partial class MediaWidget
             controls.Children.Add(button);
         }
 
-        // The player's own volume (Spotify, the browser…), or the computer's when the player cannot be found.
+        // The computer's volume.
         _volumeIcon = Ui.Icon("IconVolume", 14);
         var mute = Ui.IconButton(_volumeIcon, (_, _) => ToggleMute(), UiText.Get("MediaMute"), 28, 26);
         DockPanel.SetDock(mute, Dock.Left);
@@ -184,7 +186,29 @@ public sealed partial class MediaWidget
         body.Children.Add(_volumeLabel);
         body.Children.Add(volumeRow);
 
-        _card = new Border { CornerRadius = new CornerRadius(14), Padding = new Thickness(16, 16, 16, 12), Background = fill, Child = body };
+        // The back of the card: the songs played lately, each with its small cover. A click on the cover or the
+        // title turns the card over (and back).
+        _front = body;
+        _back = BuildBack();
+        _back.Visibility = Visibility.Collapsed;
+        foreach (var face in new FrameworkElement[] { artFrame, words })
+        {
+            face.Cursor = Cursors.Hand;
+            face.ToolTip = UiText.Get("MediaShowRecent");
+            face.MouseLeftButtonUp += (_, e) =>
+            {
+                e.Handled = true;
+                Flip();
+            };
+        }
+        var faces = new Grid();
+        faces.Children.Add(_front);
+        faces.Children.Add(_back);
+        _card = new Border
+        {
+            CornerRadius = new CornerRadius(14), Padding = new Thickness(16, 16, 16, 12), Background = fill, Child = faces,
+            RenderTransformOrigin = new Point(0.5, 0.5), RenderTransform = _turn
+        };
         _card.Resources["TextPrimary"] = Ui.White;
         _card.Resources["TextSecondary"] = Ui.Solid("#B8FFFFFF");
         _card.Resources["WidgetTrack"] = Ui.Solid("#38FFFFFF");
@@ -192,6 +216,294 @@ public sealed partial class MediaWidget
         _card.Resources["SurfaceHover"] = Ui.Solid("#24FFFFFF");
         TextElement.SetForeground(_card, Ui.White);
         return _card;
+    }
+
+    // ---- The back of the card: the browser's playlist, or the songs played lately ----
+
+    private sealed record Played(string Key, string Title, string Artist, ImageSource? Cover);
+
+    private readonly List<Played> _played = [];
+    private readonly ScaleTransform _turn = new(1, 1);
+    private FrameworkElement? _front;
+    private DockPanel? _back;
+    private StackPanel? _playedList;
+    private ScrollViewer? _backScroll;
+    private TextBlock? _backHeading;
+    private bool _flipped;
+    private object? _rememberedArt;
+    private IReadOnlyList<PlaylistSong> _playlist = [];
+    private System.Windows.Automation.AutomationElement? _hiddenTab;
+    private int _playlistRead;
+    // YouTube's small pictures, kept while QiDock runs (a few kilobytes each) so the list does not load them again.
+    private static readonly Dictionary<string, ImageSource> Thumbnails = [];
+
+    /// <summary>
+    /// Keeps the songs played lately (newest first, at most twenty) with a small copy of each cover. Windows does
+    /// not tell other apps a player's queue, so the back of the card shows what was played, not what comes next.
+    /// </summary>
+    private void Remember(string title, string artist, ImageSource? art)
+    {
+        var key = $"{title}|{artist}";
+        var index = _played.FindIndex(p => p.Key == key);
+        var cover = index >= 0 ? _played[index].Cover : null;
+        if (art is not null && !ReferenceEquals(art, _rememberedArt))
+        {
+            _rememberedArt = art;
+            cover = SmallCover(art) ?? cover;
+        }
+        if (index == 0 && ReferenceEquals(_played[0].Cover, cover)) return;
+        if (index >= 0) _played.RemoveAt(index);
+        _played.Insert(0, new Played(key, title, artist, cover));
+        if (_played.Count > 20) _played.RemoveAt(_played.Count - 1);
+        if (!_flipped) return;
+        FillBack();
+        if (index != 0) ReadPlaylist(); // another song: the list moved on
+    }
+
+    /// <summary>
+    /// Reads the list beside the video in the browser (only while the back is open; reading it makes the browser
+    /// keep its screen-reader view of the page). <paramref name="tries"/>: a tab just brought forward needs a moment.
+    /// </summary>
+    private async void ReadPlaylist(int tries = 1)
+    {
+        if (!BrowserPlaylist.IsBrowser(_session?.SourceAppUserModelId))
+        {
+            _playlist = [];
+            _hiddenTab = null;
+            return;
+        }
+        var read = ++_playlistRead;
+        var view = await BrowserPlaylist.ReadAsync(_title.Text);
+        if (read != _playlistRead || !_flipped) return;
+        if (view.Songs.Count == 0 && tries > 1)
+        {
+            await Task.Delay(900);
+            if (read == _playlistRead && _flipped) ReadPlaylist(tries - 1);
+            return;
+        }
+        var first = _playlist.Count == 0 && view.Songs.Count > 0;
+        _playlist = view.Songs;
+        _hiddenTab = view.HiddenTab;
+        FillBack(scrollToCurrent: first);
+    }
+
+    private async void PlaySong(PlaylistSong song)
+    {
+        if (!await BrowserPlaylist.PlayAsync(song)) return;
+        _playlist = _playlist.Select(s => s with { Current = s.Index == song.Index }).ToList();
+        FillBack();
+    }
+
+    private async void ShowHiddenTab()
+    {
+        if (_hiddenTab is not { } tab || !await BrowserPlaylist.ShowTabAsync(tab)) return;
+        _hiddenTab = null;
+        FillBack();
+        await Task.Delay(700);
+        ReadPlaylist(tries: 4);
+    }
+
+    private static ImageSource Thumbnail(PlaylistSong song)
+    {
+        if (Thumbnails.TryGetValue(song.VideoId, out var known)) return known;
+        if (Thumbnails.Count > 120) Thumbnails.Clear();
+        var image = new BitmapImage();
+        image.BeginInit();
+        image.UriSource = song.Thumbnail;
+        image.DecodePixelHeight = 84; // the cover is 42 points; enough for a 200% screen
+        image.CacheOption = BitmapCacheOption.OnLoad;
+        image.EndInit();
+        Thumbnails[song.VideoId] = image;
+        return image;
+    }
+
+    private static ImageSource? SmallCover(ImageSource art)
+    {
+        if (art is not BitmapSource bitmap || bitmap.PixelWidth < 1 || bitmap.PixelHeight < 1) return null;
+        try
+        {
+            var scale = Math.Min(1, 96.0 / Math.Max(bitmap.PixelWidth, bitmap.PixelHeight));
+            var small = new CachedBitmap(new TransformedBitmap(bitmap, new ScaleTransform(scale, scale)), BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
+            small.Freeze();
+            return small;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or NotSupportedException or COMException)
+        {
+            return null;
+        }
+    }
+
+    private DockPanel BuildBack()
+    {
+        var back = Ui.Icon("IconChevronLeft", 13, Ui.White, null, 2.2);
+        var backText = Ui.Text(UiText.Get("MediaShowPlaying"), 12, FontWeights.SemiBold);
+        backText.Margin = new Thickness(5, 0, 0, 0);
+        var backRow = new StackPanel { Orientation = Orientation.Horizontal };
+        backRow.Children.Add(back);
+        backRow.Children.Add(backText);
+        var backButton = new Border { Background = Brushes.Transparent, Cursor = Cursors.Hand, Padding = new Thickness(2, 4, 8, 4), Child = backRow, HorizontalAlignment = HorizontalAlignment.Left };
+        backButton.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            Flip();
+        };
+        var heading = _backHeading = Ui.Text(UiText.Get("MediaRecent"), 15.5, FontWeights.SemiBold);
+        heading.Margin = new Thickness(2, 6, 0, 10);
+        var top = new StackPanel();
+        top.Children.Add(backButton);
+        top.Children.Add(heading);
+        DockPanel.SetDock(top, Dock.Top);
+        _playedList = new StackPanel();
+        // A slim bar shows there is more below; the wheel moves the list (and never anything behind the card).
+        var scroll = _backScroll = new ScrollViewer { Content = _playedList, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        scroll.PreviewMouseWheel += (_, e) =>
+        {
+            e.Handled = true;
+            scroll.ScrollToVerticalOffset(Math.Clamp(scroll.VerticalOffset - e.Delta * 0.6, 0, scroll.ScrollableHeight));
+        };
+        var panel = new DockPanel { LastChildFill = true };
+        panel.Children.Add(top);
+        panel.Children.Add(scroll);
+        return panel;
+    }
+
+    /// <summary>The back: the browser's list when it could be read, otherwise the songs played lately.</summary>
+    private void FillBack(bool scrollToCurrent = false)
+    {
+        if (_playedList is null) return;
+        _playedList.Children.Clear();
+        if (_playlist.Count > 0)
+        {
+            _backHeading!.Text = UiText.Get("MediaPlaylist");
+            Border? now = null;
+            foreach (var song in _playlist)
+            {
+                var row = Row(Thumbnail(song), song.Title, song.Channel, song.Current, song.Current ? () => Flip() : () => PlaySong(song));
+                if (song.Current) now = row;
+                _playedList.Children.Add(row);
+            }
+            if (scrollToCurrent && now is not null)
+            {
+                // The playing song near the top, the ones coming after it below.
+                _playedList.Dispatcher.BeginInvoke(() => _backScroll?.ScrollToVerticalOffset(Math.Max(0, now.TranslatePoint(new Point(), _playedList).Y - 50)),
+                    System.Windows.Threading.DispatcherPriority.Loaded);
+            }
+            return;
+        }
+        _backHeading!.Text = UiText.Get("MediaRecent");
+        if (_hiddenTab is not null)
+        {
+            var hint = Ui.Text(UiText.Get("MediaShowTab"), 12, FontWeights.SemiBold);
+            hint.TextWrapping = TextWrapping.Wrap;
+            var button = new Border
+            {
+                CornerRadius = new CornerRadius(10), Padding = new Thickness(10, 8, 10, 8), Margin = new Thickness(0, 0, 0, 8),
+                Background = Ui.Solid("#2EFFFFFF"), Cursor = Cursors.Hand, Child = hint
+            };
+            button.MouseEnter += (_, _) => button.Background = Ui.Solid("#40FFFFFF");
+            button.MouseLeave += (_, _) => button.Background = Ui.Solid("#2EFFFFFF");
+            button.MouseLeftButtonUp += (_, e) =>
+            {
+                e.Handled = true;
+                ShowHiddenTab();
+            };
+            _playedList.Children.Add(button);
+        }
+        if (_played.Count == 0)
+        {
+            var empty = Ui.Text(UiText.Get("MediaRecentEmpty"), 12, brushKey: "TextSecondary");
+            empty.Margin = new Thickness(2, 8, 0, 0);
+            _playedList.Children.Add(empty);
+            return;
+        }
+        var nowKey = $"{_title.Text}|{_artist.Text}";
+        foreach (var song in _played)
+        {
+            var playing = song.Key == nowKey || _played.IndexOf(song) == 0 && !_idle;
+            _playedList.Children.Add(Row(song.Cover, song.Title, song.Artist, playing, playing ? () => Flip() : null));
+        }
+    }
+
+    /// <summary>One song: its small cover, the title and the artist; the playing one is lit and marked.</summary>
+    private static Border Row(ImageSource? coverImage, string title, string artist, bool playing, Action? click)
+    {
+        var cover = new Border { Width = 42, Height = 42, CornerRadius = new CornerRadius(8), Background = Ui.Solid("#26FFFFFF") };
+        if (coverImage is not null) cover.Background = new ImageBrush(coverImage) { Stretch = Stretch.UniformToFill };
+        else cover.Child = new ContentControl { Content = Ui.Icon("IconMusic", 16, Ui.WhiteSoft), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        var name = Ui.Text(title, 12.5, FontWeights.SemiBold);
+        name.TextTrimming = TextTrimming.CharacterEllipsis;
+        var by = Ui.Text(artist, 11, brushKey: "TextSecondary");
+        by.TextTrimming = TextTrimming.CharacterEllipsis;
+        var words = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 6, 0) };
+        words.Children.Add(name);
+        if (artist.Length > 0) words.Children.Add(by);
+        var line = new DockPanel();
+        DockPanel.SetDock(cover, Dock.Left);
+        line.Children.Add(cover);
+        if (playing)
+        {
+            var mark = Ui.Icon("IconVolume", 13, Ui.White, null);
+            mark.VerticalAlignment = VerticalAlignment.Center;
+            DockPanel.SetDock(mark, Dock.Right);
+            line.Children.Add(mark);
+        }
+        line.Children.Add(words);
+        var idle = playing ? Ui.Solid("#24FFFFFF") : Brushes.Transparent;
+        var row = new Border
+        {
+            CornerRadius = new CornerRadius(10), Padding = new Thickness(6, 5, 8, 5), Margin = new Thickness(0, 0, 0, 3), Child = line,
+            Background = idle
+        };
+        if (click is null) return row;
+        row.Cursor = Cursors.Hand;
+        if (!playing)
+        {
+            row.MouseEnter += (_, _) => row.Background = Ui.Solid("#14FFFFFF");
+            row.MouseLeave += (_, _) => row.Background = idle;
+        }
+        row.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            click();
+        };
+        return row;
+    }
+
+    /// <summary>Turns the card over: it narrows to an edge, the other face comes up, it widens again.</summary>
+    private void Flip(bool animate = true)
+    {
+        if (_front is null || _back is null) return;
+        void Swap()
+        {
+            _flipped = !_flipped;
+            if (_flipped)
+            {
+                FillBack(scrollToCurrent: true);
+                ReadPlaylist();
+                _back.Height = _front.ActualHeight; // the card keeps its size
+                _front.Visibility = Visibility.Hidden;
+                _back.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                _front.Visibility = Visibility.Visible;
+                _back.Visibility = Visibility.Collapsed;
+            }
+        }
+        if (!animate)
+        {
+            _turn.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            _turn.ScaleX = 1;
+            if (_flipped) Swap();
+            return;
+        }
+        var fold = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(140)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn } };
+        fold.Completed += (_, _) =>
+        {
+            Swap();
+            _turn.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(170)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+        };
+        _turn.BeginAnimation(ScaleTransform.ScaleXProperty, fold);
     }
 
     /// <summary>The round arrow of a ten-second jump, with "10" in its middle.</summary>
@@ -305,20 +617,9 @@ public sealed partial class MediaWidget
 
     private void OpenAudio()
     {
+        // The computer's own volume (what the keyboard's volume keys change), not the player's.
         CloseAudio();
         _endpoint = new AudioEndpoint();
-        _sessions = new AudioSessions();
-        var id = (_session?.SourceAppUserModelId ?? "").ToLowerInvariant();
-        if (id.Length == 0) return;
-        try
-        {
-            _playerAudio = _sessions.Read().FirstOrDefault(app =>
-            {
-                var exe = System.IO.Path.GetFileNameWithoutExtension(app.ExecutablePath ?? "").ToLowerInvariant();
-                return exe.Length > 1 && id.Contains(exe) || id.Contains(app.Name.ToLowerInvariant().Replace(" ", ""));
-            });
-        }
-        catch (Exception ex) when (ex is COMException or InvalidCastException) { _playerAudio = null; }
     }
 
     private void CloseAudio()

@@ -47,6 +47,7 @@ internal sealed class WeatherDeskWidget : DeskWidget
             DeskSize.Small => Small(r),
             DeskSize.Strip => Hours(r, r.Hours.Count),
             DeskSize.Medium => Medium(r),
+            DeskSize.Tall => Tall(r),
             _ => Large(r)
         };
     }
@@ -118,6 +119,34 @@ internal sealed class WeatherDeskWidget : DeskWidget
         grid.Children.Add(Now(r, 40));
         grid.Children.Add(At(new Border { Height = 1, Background = Track, Margin = new Thickness(0, 8, 0, 6), VerticalAlignment = VerticalAlignment.Bottom }, 1));
         grid.Children.Add(At(Hours(r, 6), 2));
+        return grid;
+    }
+
+    /// <summary>Upright: now on top, the next days below.</summary>
+    private static FrameworkElement Tall(WeatherReport r)
+    {
+        var grid = Grid("Auto,Auto,*");
+        grid.Children.Add(Small(r));
+        grid.Children.Add(At(new Border { Height = 1, Background = Track, Margin = new Thickness(0, 10, 0, 6) }, 1));
+        var days = new StackPanel { VerticalAlignment = VerticalAlignment.Top };
+        var i = 0;
+        foreach (var day in r.Days.Take(5))
+        {
+            var row = Grid(columns: "*,26,34,32");
+            row.Margin = new Thickness(0, 2, 0, 2);
+            row.Children.Add(T(i++ == 0 ? Desk.L("Bugün", "Today") : day.Date.ToString("ddd", Desk.Culture), 12.5, FontWeights.SemiBold));
+            var icon = WeatherArt.Create(day.Code, true, 18);
+            icon.HorizontalAlignment = HorizontalAlignment.Center;
+            row.Children.Add(At(icon, 0, 1));
+            var min = T(WeatherHub.Temp(day.Min), 12.5, FontWeights.SemiBold, Secondary);
+            min.HorizontalAlignment = HorizontalAlignment.Right;
+            row.Children.Add(At(min, 0, 2));
+            var max = T(WeatherHub.Temp(day.Max), 12.5, FontWeights.SemiBold);
+            max.HorizontalAlignment = HorizontalAlignment.Right;
+            row.Children.Add(At(max, 0, 3));
+            days.Children.Add(row);
+        }
+        grid.Children.Add(At(days, 2));
         return grid;
     }
 

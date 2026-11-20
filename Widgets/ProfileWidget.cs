@@ -30,7 +30,7 @@ public sealed class ProfileWidget : DockWidget
 
     public ProfileWidget()
     {
-        var icon = Ui.Icon("IconLayout", 15);
+        var icon = Ui.Icon("IconPerson", 15);
         icon.Margin = new Thickness(0, 0, 8, 0);
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         _caption = Ui.Text("", 10, brushKey: "TextSecondary");
@@ -110,7 +110,7 @@ public sealed class ProfileWidget : DockWidget
             {
                 _popup.Close();
                 if (index != Current.EffectiveActiveProfile) UpdateSettings(s => s.SwitchProfile(index));
-                Ui.ShowHud("IconLayout", profiles[index].Name);
+                Ui.ShowHud("IconPerson", profiles[index].Name);
             }));
         }
 
@@ -126,7 +126,7 @@ public sealed class ProfileWidget : DockWidget
             {
                 _popup.Close();
                 UpdateSettings(s => s.AddProfile(name));
-                Ui.ShowHud("IconLayout", UiText.Format("ProfileCreated", name));
+                Ui.ShowHud("IconPerson", UiText.Format("ProfileCreated", name));
             }));
         }
 

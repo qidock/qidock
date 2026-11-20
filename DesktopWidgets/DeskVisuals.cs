@@ -14,8 +14,8 @@ internal static class DeskUi
     public static readonly Brush CardFill = Ui.Solid("#F21C1C1F");
     public static readonly Brush CardStroke = Ui.Solid("#1EFFFFFF");
     public static readonly Brush Text = Ui.Solid("#FFF5F5F7");
-    public static readonly Brush Secondary = Ui.Solid("#FF8E8E93");
-    public static readonly Brush Tertiary = Ui.Solid("#FF5E5E63");
+    public static readonly Brush Secondary = Ui.Solid("#99EBEBF5");
+    public static readonly Brush Tertiary = Ui.Solid("#4DEBEBF5");
     public static readonly Brush Track = Ui.Solid("#24FFFFFF");
     public static readonly Brush Inset = Ui.Solid("#14FFFFFF");
     public static readonly Brush InsetHover = Ui.Solid("#24FFFFFF");

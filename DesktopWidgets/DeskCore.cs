@@ -10,7 +10,8 @@ using QiDock.Services;
 namespace QiDock.DesktopWidgets;
 
 /// <summary>Desktop widget sizes on a 164 DIP grid with 16 DIP gaps (two smalls side by side = one medium).</summary>
-public enum DeskSize { Mini, Small, Strip, Medium, Large }
+/// <remarks>Hero: one very large piece (the big clock), drawn without a card. Tall: a medium stood upright.</remarks>
+public enum DeskSize { Mini, Small, Strip, Medium, Large, Hero, Tall }
 
 /// <summary>One widget placed on the desktop.</summary>
 public sealed class DeskItem
@@ -26,6 +27,9 @@ public sealed class DeskItem
 public sealed class DeskLayout
 {
     public bool Initialized { get; set; }
+
+    /// <summary>Cards of frosted glass over the wallpaper (true) or the dark cards.</summary>
+    public bool Glass { get; set; } = true;
     public List<DeskItem> Items { get; set; } = [];
 }
 
@@ -83,6 +87,8 @@ internal static class Desk
         DeskSize.Small => new Size(Unit, Unit),
         DeskSize.Strip => new Size(Unit * 2 + Gap, StripHeight),
         DeskSize.Medium => new Size(Unit * 2 + Gap, Unit),
+        DeskSize.Hero => new Size(Unit * 4 + Gap * 3, 460),
+        DeskSize.Tall => new Size(Unit, Unit * 2 + Gap),
         _ => new Size(Unit * 2 + Gap, Unit * 2 + Gap)
     };
 
@@ -96,6 +102,8 @@ internal static class Desk
         DeskSize.Small => L("Küçük", "Small"),
         DeskSize.Strip => L("Şerit", "Strip"),
         DeskSize.Medium => L("Orta", "Medium"),
+        DeskSize.Hero => L("Dev", "Huge"),
+        DeskSize.Tall => L("Dikey", "Tall"),
         _ => L("Büyük", "Large")
     };
 
@@ -159,6 +167,17 @@ public abstract class DeskWidget : IDisposable
 
     /// <summary>How often <see cref="Tick"/> runs while visible (null: only on data events).</summary>
     public virtual TimeSpan? Interval => null;
+
+    /// <summary>Drawn straight on the wallpaper, without the card behind it (the big clock).</summary>
+    public virtual bool Bare => false;
+
+    /// <summary>The widget paints the whole card itself (a song's cover): the card then shows no glass under it.</summary>
+    public virtual bool Covers => false;
+
+    /// <summary>Raised when <see cref="Covers"/> changes.</summary>
+    public event Action? CoversChanged;
+
+    protected void RaiseCoversChanged() => CoversChanged?.Invoke();
     public virtual void Tick() { }
 
     private bool _attached;

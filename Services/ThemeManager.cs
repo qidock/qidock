@@ -14,6 +14,9 @@ public static class ThemeManager
     /// <summary>The style last applied ("glass", "black"…).</summary>
     public static string CurrentStyle => _styleId;
 
+    /// <summary>The palette last applied (dark or light), after a style's own base has been taken into account.</summary>
+    public static AppTheme CurrentTheme { get; private set; } = AppTheme.Dark;
+
     /// <summary>
     /// Loads the dark or light palette, lays the chosen style over it (a style brings its own base: the light
     /// styles always sit on the light palette) and sets the materials' opacity.
@@ -22,6 +25,7 @@ public static class ThemeManager
     {
         var look = ThemeStyles.Find(style ?? _styleId);
         if (look.Id != ThemeStyles.Glass) theme = look.Base;
+        CurrentTheme = theme;
         var source = $"/QiDock;component/Design/Palettes/{theme}.xaml";
         var dictionaries = Application.Current.Resources.MergedDictionaries;
         if (_palette?.Source?.OriginalString != source)
@@ -48,6 +52,9 @@ public static class ThemeManager
         SetSurfaceOpacity(opacity);
     }
 
+    /// <summary>The dock and menu materials were made again (another theme, style or opacity).</summary>
+    public static event EventHandler? MaterialsChanged;
+
     public static void SetSurfaceOpacity(double opacity)
     {
         if (!double.IsFinite(opacity) || opacity is < 0.6 or > 1) throw new ArgumentOutOfRangeException(nameof(opacity));
@@ -71,5 +78,6 @@ public static class ThemeManager
             material.Freeze();
             Materials[key] = material;
         }
+        MaterialsChanged?.Invoke(null, EventArgs.Empty);
     }
 }
