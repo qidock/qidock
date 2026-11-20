@@ -189,6 +189,15 @@ public sealed class WidgetPopup
         _surface.Margin = new Thickness(0);
         return _surface;
     }
+
+    /// <summary>Debug snapshot run: the card in the sheet it grows out of the dock in (as <see cref="ToggleSheet"/> does).</summary>
+    internal DockSheet RehearseSheet()
+    {
+        var sheet = new DockSheet(_width);
+        _surface.Child = null;
+        sheet.Body = _content;
+        return sheet;
+    }
 #endif
 
     public void Toggle()

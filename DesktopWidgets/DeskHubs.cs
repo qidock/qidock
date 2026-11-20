@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.IO;
 using System.Net.NetworkInformation;
 using System.Runtime.InteropServices;
@@ -89,6 +89,14 @@ internal sealed class SystemHub : HubBase
             _lastIdle = idle;
             _lastTotal = total;
         }
+#if DEBUG
+        if (Services.Promo.On)
+        {
+            if (CpuHistory.Count == 0)
+                for (var i = 0; i < HistoryLength; i++) Push(CpuHistory, Services.Promo.NextCpu());
+            Cpu = Services.Promo.NextCpu();
+        }
+#endif
         Push(CpuHistory, Cpu);
 
         var memory = new MemoryStatus { Length = (uint)Marshal.SizeOf<MemoryStatus>() };

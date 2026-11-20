@@ -445,6 +445,46 @@ public abstract class EdgePanel : Window
         return stage;
     }
 
+    /// <summary>
+    /// Debug snapshot run: the panel placed on a dock drawn elsewhere (screen DIPs in <paramref name="dock"/>), as
+    /// opening it there would place it. Returns its frame (for the caller to put at <c>Bounds</c>) and draw with
+    /// <see cref="RehearseDockMorph"/>.
+    /// </summary>
+    internal (FrameworkElement Frame, Rect Bounds) RehearseOnDock(DockAnchor dock)
+    {
+        Build();
+        TrimLastGap();
+        Content = null;
+        _dock = dock;
+        _sheetMax = 4000;
+        PlaceOnDock(dock, CardWidth + 2 * Pad, ContentHeight());
+        _frame.Width = _frameSize.Width;
+        _frame.Height = _frameSize.Height;
+        _frame.HorizontalAlignment = HorizontalAlignment.Left;
+        _frame.VerticalAlignment = VerticalAlignment.Top;
+        _sheet.Background = Brushes.Transparent;
+        _sheet.BorderThickness = new Thickness(0);
+        PaintDockShape();
+        _shape.Visibility = Visibility.Visible;
+        _outline.Visibility = Visibility.Collapsed;
+        return (_frame, new Rect(Left, Top, _frameSize.Width, _frameSize.Height));
+    }
+
+    /// <summary>
+    /// Debug snapshot run: the panel from <see cref="RehearseOnDock"/> at <paramref name="progress"/> (0 = inside the
+    /// tile, 1 = open), its content at <paramref name="content"/> opacity and <paramref name="rise"/> points low.
+    /// Returns the stretch of the dock's top edge (screen DIPs) the dock leaves out under it.
+    /// </summary>
+    internal (double Left, double Right)? RehearseDockMorph(double progress, double content, double rise)
+    {
+        if (_dock is not { } dock) return null;
+        (double Left, double Right)? seam = null;
+        ApplyMorph(progress, _frameSize.Width, _frameSize.Height, dock.TileCenter - Left, dock.TileWidth, Fillet + Slack, range => seam = range);
+        _scroll.Opacity = content;
+        foreach (UIElement card in Cards.Children) Motion.Shift(card).Y = rise;
+        return seam is { } r ? (r.Left + Left, r.Right + Left) : null;
+    }
+
     /// <summary>Draws the rehearsed dock-grown panel at <paramref name="progress"/> (0 = inside the tile, 1 = open).</summary>
     internal void RehearseMorph(double progress)
     {

@@ -52,6 +52,15 @@ public partial class App : Application
             DesktopWidgets.DeskSheet.Render(sheet, () => Preferences.Current.WidgetOptions, () => Shutdown());
             return;
         }
+        if (e.Args is ["--promo-shots", var promoFolder, var promoLanguage, .. var promoSteps])
+        {
+            // The pictures of the promotional videos, with made-up data (QIDOCK_PROMO=1); see PromoShots.
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            UiText.Current.SetLanguage(promoLanguage == "en" ? Models.AppLanguage.English : Models.AppLanguage.Turkish);
+            ThemeManager.Apply(Models.AppTheme.Dark, Preferences.Current.SurfaceOpacity, ThemeStyles.Glass);
+            PromoShots.Render(promoFolder, promoSteps.FirstOrDefault(), () => Shutdown());
+            return;
+        }
         if (e.Args is ["--render-apps", var appsPicture])
         {
             // The app screen as the low-memory (software) drawing shows it, saved as a picture at the screen's scale.

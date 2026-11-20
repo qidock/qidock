@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -22,6 +22,9 @@ internal static class CpuTop
     /// <summary>The busiest programs since the last call (empty on the first call, which only takes the baseline).</summary>
     public static IReadOnlyList<CpuUser> Sample(int count)
     {
+#if DEBUG
+        if (Promo.On) return Promo.CpuUsers();
+#endif
         var now = DateTime.UtcNow;
         var elapsed = (now - _previousAt).TotalMilliseconds;
         var first = _previousAt == default || elapsed > 30000;

@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Threading;
 using QiDock.Services.Widgets;
 
@@ -69,6 +69,12 @@ internal sealed class DeskWidgetManager : IDisposable
         _wallpaperTimer.Start();
     }
 
+    private void OnWallpaperChosen()
+    {
+        _wallpaperTimer.Stop();
+        _wallpaperTimer.Start();
+    }
+
     public IReadOnlyList<DeskItem> Items => _layout.Items;
 
     public void Start()
@@ -82,6 +88,7 @@ internal sealed class DeskWidgetManager : IDisposable
         DeskCardFace.GlassEnabled = _layout.Glass;
         WallpaperGlass.Refresh();
         Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnPreferenceChanged;
+        Services.WallpaperGallery.Applied += OnWallpaperChosen;
         foreach (var item in _layout.Items.ToList()) Open(item);
     }
 
@@ -294,6 +301,7 @@ internal sealed class DeskWidgetManager : IDisposable
     {
         _disposed = true;
         Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnPreferenceChanged;
+        Services.WallpaperGallery.Applied -= OnWallpaperChosen;
         _saveTimer.Stop();
         _recreateTimer.Stop();
         _wallpaperTimer.Stop();

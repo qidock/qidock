@@ -36,13 +36,71 @@ internal static partial class BrowserPlaylist
 
     public static Task<PlaylistView> ReadAsync(string nowTitle) => Task.Run(() => Read(nowTitle));
 
-    /// <summary>Plays a song of the list: the same as clicking it in the browser.</summary>
-    public static Task<bool> PlayAsync(PlaylistSong song) => Task.Run(() => Try(() =>
+    /// <summary>
+    /// Plays a song of the list: the same as clicking it in the browser. The song's links are looked up again first
+    /// (the page may have redrawn the list since it was read); the entry has two (picture and title), and when the
+    /// first does not start the song within a moment the other is tried. What happened goes to the log.
+    /// </summary>
+    public static Task<bool> PlayAsync(PlaylistSong song) => Task.Run(async () =>
     {
-        if (!song.Link.TryGetCurrentPattern(InvokePattern.Pattern, out var pattern)) return false;
-        ((InvokePattern)pattern).Invoke();
-        return true;
-    }));
+        var links = Try(() => LinksOf(song)) ?? [];
+        if (links.Count == 0) links.Add((song.Link, null));
+        var step = 0;
+        foreach (var (link, window) in links)
+        {
+            step++;
+            var before = window is null ? "" : Try(() => window.Current.Name) ?? "";
+            string outcome;
+            try
+            {
+                if (!link.TryGetCurrentPattern(InvokePattern.Pattern, out var pattern))
+                {
+                    AppLog.Write($"Playlist: song {song.Index} link {step} cannot be clicked");
+                    continue;
+                }
+                ((InvokePattern)pattern).Invoke();
+                outcome = "clicked";
+            }
+            catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException or COMException or ArgumentException or TimeoutException)
+            {
+                AppLog.Write($"Playlist: song {song.Index} link {step} failed: {ex.GetType().Name} {ex.Message}");
+                continue;
+            }
+            if (window is null) return true;
+            // The window's title follows the video: once it changes, the song has started.
+            for (var wait = 0; wait < 8; wait++)
+            {
+                await Task.Delay(250);
+                var now = Try(() => window.Current.Name) ?? "";
+                if (now != before && now.Length > 0)
+                {
+                    AppLog.Write($"Playlist: song {song.Index} started ({outcome}, link {step})");
+                    return true;
+                }
+            }
+            AppLog.Write($"Playlist: song {song.Index} link {step} {outcome}, but the page did not change");
+        }
+        return false;
+    });
+
+    /// <summary>The links of a song in the browser now, with the window they are in.</summary>
+    private static List<(AutomationElement Link, AutomationElement? Window)> LinksOf(PlaylistSong song)
+    {
+        var found = new List<(AutomationElement, AutomationElement?)>();
+        foreach (AutomationElement window in AutomationElement.RootElement.FindAll(TreeScope.Children, Windows))
+        {
+            if (!(Try(() => window.Current.Name) ?? "").Contains("YouTube", StringComparison.OrdinalIgnoreCase)) continue;
+            foreach (AutomationElement link in window.FindAll(TreeScope.Descendants, Links))
+            {
+                var url = link.TryGetCurrentPattern(ValuePattern.Pattern, out var value) ? ((ValuePattern)value).Current.Value : "";
+                var query = Query(url);
+                if (query.GetValueOrDefault("v") == song.VideoId && query.GetValueOrDefault("index") == song.Index.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                    found.Add((link, window));
+            }
+            if (found.Count > 0) break;
+        }
+        return found;
+    }
 
     /// <summary>Brings a browser tab to the front of its window (the window itself stays where it is).</summary>
     public static Task<bool> ShowTabAsync(AutomationElement tab) => Task.Run(() => Try(() =>
@@ -112,13 +170,19 @@ internal static partial class BrowserPlaylist
             words.Add(word);
             if (words.Count == 2) break;
         }
-        return words.Count switch
+        if (words.Count >= 2) return (words[0], words[1]);
+        // Chrome usually gives only the link's whole name: "Title 3 dakika 33 saniye Channel". The spoken length
+        // (in the browser's language) sits between the title and the channel.
+        foreach (var whole in new[] { label.Trim(), words.Count == 1 ? words[0] : "" })
         {
-            0 => (label.Trim(), ""),
-            1 => (words[0], ""),
-            _ => (words[0], words[1])
-        };
+            var parts = Spoken().Match(whole);
+            if (parts.Success) return (parts.Groups[1].Value.Trim(), parts.Groups[3].Value.Trim());
+        }
+        return (words.Count == 1 ? words[0] : label.Trim(), "");
     }
+
+    [GeneratedRegex(@"^(.+?)\s+((?:\d+\s+(?:saat|dakika|saniye|hours?|minutes?|seconds?),?\s*)+)(.*)$", RegexOptions.IgnoreCase)]
+    private static partial Regex Spoken();
 
     /// <summary>The video in the address bar of the window, the one playing.</summary>
     private static string? CurrentVideo(AutomationElement window)

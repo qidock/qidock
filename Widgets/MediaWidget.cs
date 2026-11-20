@@ -131,6 +131,8 @@ public sealed partial class MediaWidget : DockWidget
         _popup?.Close();
         _progressTimer.Stop();
         Detach();
+        foreach (var watched in _watched) watched.PlaybackInfoChanged -= Other_Changed;
+        _watched.Clear();
         _manager = null;
     }
 
@@ -181,7 +183,7 @@ public sealed partial class MediaWidget : DockWidget
         GlobalSystemMediaTransportControlsSession? session;
         try
         {
-            session = _manager.GetCurrentSession() ?? _manager.GetSessions().FirstOrDefault();
+            session = Choose(_manager);
         }
         catch (COMException)
         {
@@ -200,6 +202,57 @@ public sealed partial class MediaWidget : DockWidget
         }
         _ = RefreshAsync();
     }
+
+    /// <summary>
+    /// Which player the tile follows. Windows' own "current" player is often a stale one (a paused video left open
+    /// in another app), so: the one playing (Windows' choice first), else the one that played last here, else the
+    /// one most recently active, else Windows' choice. Every player is watched, so starting one switches the tile.
+    /// </summary>
+    private GlobalSystemMediaTransportControlsSession? Choose(GlobalSystemMediaTransportControlsSessionManager manager)
+    {
+        var current = manager.GetCurrentSession();
+        var all = manager.GetSessions().ToList();
+        Watch(all);
+        if (current is not null && IsPlaying(current)) return current;
+        if (all.FirstOrDefault(IsPlaying) is { } playing) return playing;
+        if (_lastPlayed is not null && all.FirstOrDefault(s => PlayerId(s) == _lastPlayed) is { } last) return last;
+        return all.OrderByDescending(Active).FirstOrDefault() ?? current;
+
+        static bool IsPlaying(GlobalSystemMediaTransportControlsSession s)
+        {
+            try { return s.GetPlaybackInfo()?.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing; }
+            catch (COMException) { return false; }
+        }
+        static DateTimeOffset Active(GlobalSystemMediaTransportControlsSession s)
+        {
+            try { return s.GetTimelineProperties()?.LastUpdatedTime ?? DateTimeOffset.MinValue; }
+            catch (COMException) { return DateTimeOffset.MinValue; }
+        }
+    }
+
+    private static string? PlayerId(GlobalSystemMediaTransportControlsSession s)
+    {
+        try { return s.SourceAppUserModelId; }
+        catch (COMException) { return null; }
+    }
+
+    private string? _lastPlayed;
+    private readonly List<GlobalSystemMediaTransportControlsSession> _watched = [];
+
+    /// <summary>Hears every player start or stop (not only the one shown), so the tile can move to it.</summary>
+    private void Watch(List<GlobalSystemMediaTransportControlsSession> sessions)
+    {
+        foreach (var old in _watched) old.PlaybackInfoChanged -= Other_Changed;
+        _watched.Clear();
+        foreach (var session in sessions)
+        {
+            session.PlaybackInfoChanged += Other_Changed;
+            _watched.Add(session);
+        }
+    }
+
+    private void Other_Changed(GlobalSystemMediaTransportControlsSession sender, object args) =>
+        _dispatcher.InvokeAsync(AttachCurrentSession);
 
     private void Detach()
     {
@@ -241,6 +294,7 @@ public sealed partial class MediaWidget : DockWidget
             _artist.Text = string.IsNullOrWhiteSpace(title) ? "" : artist;
             _tile.ToolTip = text;
             var playing = _playing = playback?.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+            if (playing) _lastPlayed = PlayerId(session);
             _playPause.Content = Ui.Glyph(playing ? "GlyphPause" : "GlyphPlay", 11);
             _previous.IsEnabled = playback?.Controls?.IsPreviousEnabled != false;
             _next.IsEnabled = playback?.Controls?.IsNextEnabled != false;

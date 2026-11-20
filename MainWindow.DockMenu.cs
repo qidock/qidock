@@ -196,10 +196,6 @@ public partial class MainWindow
         peek.IsEnabled = current.WidgetPlacement == WidgetPlacement.TopBar;
         menu.Items.Add(peek);
 
-        var notch = Item(UiText.Get("MenuNotchBrowser"), "IconGlobe", current.NotchBrowser);
-        notch.Click += (_, _) => SavePreferences(_preferences.Current with { NotchBrowser = !_preferences.Current.NotchBrowser });
-        menu.Items.Add(notch);
-
         var glass = Item(UiText.Get("MenuDockGlass"), "IconSparkle", current.DockGlass);
         glass.Click += (_, _) => SavePreferences(_preferences.Current with { DockGlass = !_preferences.Current.DockGlass });
         menu.Items.Add(glass);

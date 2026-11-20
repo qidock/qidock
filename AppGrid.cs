@@ -220,12 +220,33 @@ public sealed class AppGridWindow : OverlayWindow
     /// How large the icons are: their size in points, and the screen pixels that covers. Icons are read at exactly
     /// those pixels and drawn on whole pixels, so they are never scaled again (scaling them made them grainy).
     /// </summary>
-    private static readonly (double Dip, int Pixels) IconSize = MeasureIcon();
+    private static (double Dip, int Pixels) _iconSize;
+
+    /// <summary>The icons' size, measured again each time: when the screen's scale changes the cached icons go.</summary>
+    private static (double Dip, int Pixels) IconSize
+    {
+        get
+        {
+            var now = MeasureIcon();
+            if (now != _iconSize)
+            {
+                _iconSize = now;
+                Icons.Clear();
+            }
+            return _iconSize;
+        }
+    }
 
     /// <summary>Screen pixels per point on the main screen.</summary>
-    private static double ScreenScale => Application.Current?.MainWindow is { } main && PresentationSource.FromVisual(main) is not null
-        ? VisualTreeHelper.GetDpi(main).DpiScaleX
-        : VisualTreeHelper.GetDpi(new DrawingVisual()).DpiScaleX;
+    // Asked of Windows for the main screen itself: QiDock's own windows may not be on screen yet when the first
+    // icons are read, and a guess of 100% made every icon a blurred enlargement of a picture half its size.
+    private static double ScreenScale =>
+        GetDpiForMonitor(MonitorFromPoint(0 /* the point 0,0 */, 1 /* primary */), 0 /* effective */, out var dpi, out _) == 0 && dpi > 0
+            ? dpi / 96.0
+            : VisualTreeHelper.GetDpi(Application.Current?.MainWindow ?? (Visual)new DrawingVisual()).DpiScaleX;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern nint MonitorFromPoint(long point, uint flags);
+    [System.Runtime.InteropServices.DllImport("shcore.dll")] private static extern int GetDpiForMonitor(nint monitor, int type, out uint dpiX, out uint dpiY);
 
     private static (double, int) MeasureIcon()
     {
@@ -326,9 +347,11 @@ public sealed class AppGridWindow : OverlayWindow
     {
         AppList.RefreshAsync().ContinueWith(t =>
         {
-            var ids = LaunchStore.Merge(LaunchStore.Load(), t.Result)
-                .Take(80)
-                .SelectMany(e => e.IsFolder ? e.Apps!.Take(9) : [e.App!])
+            // What the first view shows: the folders and the most used apps (the rest load when a tab shows them).
+            var scores = AppUsage.Scores();
+            var entries = LaunchStore.Merge(LaunchStore.Load(), t.Result);
+            var ids = entries.Where(e => e.IsFolder).SelectMany(e => e.Apps!.Take(9))
+                .Concat(entries.Where(e => !e.IsFolder).Select(e => e.App!).OrderByDescending(id => scores.GetValueOrDefault(id)).Take(30))
                 .Where(id => !Icons.ContainsKey(id))
                 .ToList();
             if (ids.Count == 0) return;
@@ -347,8 +370,10 @@ public sealed class AppGridWindow : OverlayWindow
     /// <summary>Opens the app screen without taking the keyboard, waits for the icons and saves it as a picture.</summary>
     internal static void RenderTo(string path, Action done)
     {
+        Services.Widgets.WallpaperGlass.Refresh(); // as the running dock has it
         var window = new AppGridWindow { ShowActivated = false };
         window.Show();
+        if (Services.Promo.On) window.Left = -30000; // drawn for a picture only, never seen
         window.Root.Opacity = 1;
         var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
         timer.Tick += (_, _) =>
@@ -555,14 +580,14 @@ public sealed class AppGridWindow : OverlayWindow
     }
 
     /// <summary>
-    /// The panel becomes frosted glass: the desktop picture behind it, softened, with its own colours (as the
-    /// widgets show it) under a light veil. Without a desktop picture, what is on the screen behind it, blurred
+    /// The panel becomes neutral frosted glass: the desktop picture behind it, softened and almost without colour
+    /// (a pink wallpaper dyed the whole panel), under a light veil. Without a desktop picture, what is on the screen behind it, blurred
     /// (read here, before the window shows). Where neither can be had it keeps its solid fill.
     /// </summary>
     private void Frost(Rect panel)
     {
-        var veil = Color.FromArgb(0x5C, 0x0C, 0x0C, 0x10);
-        if (Services.Widgets.GlassLook.Surface(new Rect(panel.Size), panel, veil, sheen: true, frost: false) is { } wallpaper)
+        var veil = Color.FromArgb(0x66, 0x0C, 0x0C, 0x10);
+        if (Services.Widgets.GlassLook.Surface(new Rect(panel.Size), panel, veil, sheen: true, frost: true) is { } wallpaper)
         {
             _panel.Background = wallpaper;
             return;
@@ -663,15 +688,26 @@ public sealed class AppGridWindow : OverlayWindow
 
     private void Load(IReadOnlyList<InstalledApp> apps)
     {
+#if DEBUG
+        if (Services.Promo.On) apps = Services.Promo.Named(apps.Where(a => Services.Promo.IsWindowsApp(a.Id)).ToList());
+#endif
         _known.Clear();
         foreach (var app in apps) _known.TryAdd(app.Id, app);
         _items = LaunchStore.Merge(LaunchStore.Load(), apps);
         var scores = AppUsage.Scores();
+#if DEBUG
+        if (Services.Promo.On)
+        {
+            _items = LaunchStore.Merge([], apps);
+            scores = Services.Promo.AppScores(apps);
+        }
+#endif
+        // "Tümü" shows only these (with the folders): the most used apps, at most two rows. Every other app is
+        // under its category or found by typing, so the first view stays short and quick to draw.
         _frequent = apps
-            .Where(a => scores.ContainsKey(a.Id))
+            .Where(a => scores.GetValueOrDefault(a.Id) > 0)
             .OrderByDescending(a => scores[a.Id])
             .ThenBy(a => a.Name, StringComparer.CurrentCultureIgnoreCase)
-            // Two rows on top with the folders, as many as the folders leave room for.
             .Take(Math.Max((int)_cols, 2 * (int)_cols - _items.Count(e => e.IsFolder)))
             .Select(a => new LaunchEntry { App = a.Id })
             .ToList();
@@ -802,13 +838,9 @@ public sealed class AppGridWindow : OverlayWindow
             var top = _items.Where(e => e.IsFolder).Concat(_frequent).ToList();
             foreach (var entry in top) Put(entry);
             EndRow();
-            var rest = Sorted(_items.Where(e => !e.IsFolder));
-            if (top.Count > 0 && rest.Count > 0)
-            {
-                _lineY = y + 14 * _k;
-                y += 30 * _k;
-            }
-            foreach (var entry in rest) Put(entry);
+            // The rest only while nothing has been used yet (a new computer): otherwise the panel would be empty.
+            if (_frequent.Count == 0)
+                foreach (var entry in Sorted(_items.Where(e => !e.IsFolder))) Put(entry);
         }
         EndRow();
         _contentHeight = y + 10;

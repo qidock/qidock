@@ -47,7 +47,7 @@
             </Grid>
             <!-- A picture of the dock as the choices below would make it, on every tab; nothing changes on screen until Apply. -->
             <Border x:Name="PreviewHost" Grid.Row="1" BorderBrush="{DynamicResource MenuDivider}" BorderThickness="0,0,0,1" />
-            <TabControl x:Name="SettingsTabs" Grid.Row="2" TabStripPlacement="Left" SelectedIndex="0">
+            <TabControl x:Name="SettingsTabs" Grid.Row="2" TabStripPlacement="Left" SelectedIndex="0" SelectionChanged="SettingsTabs_SelectionChanged">
                 <TabItem Header="{local:Loc General}">
                     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False">
                         <StackPanel Margin="{StaticResource SettingsPageInset}">
@@ -94,11 +94,6 @@
                                 <CheckBox x:Name="DockGlassToggle" DockPanel.Dock="Right" Style="{StaticResource SettingsSwitch}"
                                           AutomationProperties.Name="{local:Loc DockGlassSetting}" AutomationProperties.HelpText="{local:Loc DockGlassSettingHelp}" />
                                 <TextBlock Text="{local:Loc DockGlassSetting}" Style="{StaticResource SettingsRowLabel}" ToolTip="{local:Loc DockGlassSettingHelp}" />
-                            </DockPanel></Border>
-                            <Border Style="{StaticResource SettingsRow}"><DockPanel>
-                                <CheckBox x:Name="NotchBrowserToggle" DockPanel.Dock="Right" Style="{StaticResource SettingsSwitch}"
-                                          AutomationProperties.Name="{local:Loc NotchBrowserSetting}" AutomationProperties.HelpText="{local:Loc NotchBrowserSettingHelp}" />
-                                <TextBlock Text="{local:Loc NotchBrowserSetting}" Style="{StaticResource SettingsRowLabel}" ToolTip="{local:Loc NotchBrowserSettingHelp}" />
                             </DockPanel></Border>
                             <Border Style="{StaticResource SettingsRow}"><DockPanel>
                                 <CheckBox x:Name="BadgesToggle" DockPanel.Dock="Right" Style="{StaticResource SettingsSwitch}"
@@ -220,6 +215,25 @@
                                 <TextBlock Text="{local:Loc ShowSeconds}" Style="{StaticResource SettingsRowLabel}" />
                             </DockPanel></Border>
                             <TextBlock Text="{local:Loc AiLimitsHelp}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,14,0,0" FontSize="{StaticResource TextSizeCaption}" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+                <TabItem x:Name="WallpaperTab" Header="{local:Loc Wallpaper}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False">
+                        <StackPanel Margin="{StaticResource SettingsPageInset}">
+                            <TextBlock Text="{local:Loc Wallpaper}" Style="{StaticResource SettingsHeading}" />
+                            <TextBlock Text="{local:Loc WallpaperDescription}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,-4,0,12" />
+                            <DockPanel Margin="0,0,0,16">
+                                <Button x:Name="PickWallpaperButton" DockPanel.Dock="Right" Content="{local:Loc WallpaperPick}" Style="{StaticResource SettingsButton}" Click="PickWallpaper_Click" />
+                                <TextBlock x:Name="WallpaperStatus" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0"
+                                           Foreground="{DynamicResource TextSecondary}" AutomationProperties.LiveSetting="Polite" />
+                            </DockPanel>
+                            <TextBlock Text="{local:Loc WallpaperDaily}" FontWeight="SemiBold" Margin="0,0,0,8" />
+                            <UniformGrid x:Name="DailyWallpapers" Columns="3" Margin="-4,0" />
+                            <Button x:Name="MoreWallpapersButton" Content="{local:Loc WallpaperMore}" Style="{StaticResource SettingsButton}"
+                                    HorizontalAlignment="Left" Margin="0,10,0,0" Visibility="Collapsed" Click="MoreWallpapers_Click" />
+                            <TextBlock Text="{local:Loc WallpaperWindowsOwn}" FontWeight="SemiBold" Margin="0,22,0,8" />
+                            <UniformGrid x:Name="WindowsWallpapers" Columns="3" Margin="-4,0" />
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>

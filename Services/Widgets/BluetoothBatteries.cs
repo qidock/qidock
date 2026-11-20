@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 using Windows.Devices.Bluetooth;
 using Windows.Devices.Enumeration;
 
@@ -23,6 +23,9 @@ public static partial class BluetoothBatteries
 
     public static async Task<IReadOnlyList<DeviceBattery>> ReadAsync()
     {
+#if DEBUG
+        if (Promo.On) return Promo.Batteries;
+#endif
         // Windows also keeps the last level of devices paired long ago; only those connected now (or lately) are shown.
         var connected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var selector in new[]

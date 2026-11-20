@@ -29,6 +29,10 @@
     <Thickness x:Key="DockPadding">8,0,8,0</Thickness>
     <Thickness x:Key="ControlStroke">1</Thickness>
     <CornerRadius x:Key="DockRadius">18</CornerRadius>
+    <!-- A theme's own texture and bottom band on the dock (Services/ThemePatterns.cs); none for Glass. -->
+    <SolidColorBrush x:Key="DockPattern" Color="Transparent" />
+    <SolidColorBrush x:Key="DockBand" Color="Transparent" />
+    <sys:Double x:Key="DockBandHeight">0</sys:Double>
     <CornerRadius x:Key="ControlRadius">12</CornerRadius>
     <CornerRadius x:Key="PopupRadius">10</CornerRadius>
     <Style TargetType="ToolTip">

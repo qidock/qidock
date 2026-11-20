@@ -69,6 +69,13 @@ public sealed class DockHud : EdgePanel
 
 #if DEBUG
     internal void RehearseLevel(string iconKey, string label, int percent, Brush accent) => SetLevel(iconKey, label, percent, accent, false);
+
+    internal void RehearseMessage(string iconKey, string text)
+    {
+        _icon.Content = Ui.Icon(iconKey, 20);
+        _label.Text = text;
+        _track.Visibility = _value.Visibility = Visibility.Collapsed;
+    }
 #endif
 
     private void SetLevel(string iconKey, string label, int percent, Brush accent, bool dimmed)

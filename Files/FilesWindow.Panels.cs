@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -59,6 +59,10 @@ internal sealed partial class FilesWindow
         AddPlace(list, GlyphImage, L("Resimler", "Pictures"), Environment.GetFolderPath(Environment.SpecialFolder.MyPictures));
         AddPlace(list, GlyphAudio, L("Müzik", "Music"), Environment.GetFolderPath(Environment.SpecialFolder.MyMusic));
         AddPlace(list, GlyphVideo, L("Videolar", "Videos"), Environment.GetFolderPath(Environment.SpecialFolder.MyVideos));
+#if DEBUG
+        if (Services.Promo.On) AddPlace(list, GlyphHome, L("Kişisel klasör", "Home"), home);
+        else
+#endif
         AddPlace(list, GlyphHome, Path.GetFileName(home), home);
 
         list.Children.Add(SectionTitle(L("Konumlar", "Locations")));
@@ -189,6 +193,9 @@ internal sealed partial class FilesWindow
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
             }
+#if DEBUG
+            if (Services.Promo.On) found = found.Where(f => f.Path.Length <= 3 && f.Path.StartsWith("C", StringComparison.OrdinalIgnoreCase)).ToList();
+#endif
             return found;
         });
         if (_locations is null) return;

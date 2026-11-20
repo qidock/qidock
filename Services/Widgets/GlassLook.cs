@@ -41,11 +41,12 @@ internal static class GlassLook
     {
         if (DockVeil is not { } veil) return null;
         if (WindowBehind) return Neutral;
-        if (WallpaperGlass.Image is not { } image || !localToScreen.HasInverse) return null;
+        if (WallpaperGlass.Grey is not { } image || !localToScreen.HasInverse) return null;
         if (_screen is not { } screen || screen.Veil != veil || !ReferenceEquals(screen.Image, image))
         {
             var area = new Rect(0, 0, SystemParameters.PrimaryScreenWidth, SystemParameters.PrimaryScreenHeight);
-            if (Surface(area, area, veil, sheen: false, frost: false) is not { } baked) return null;
+            // Nearly grey: in the wallpaper's own colours a pink or purple picture dyed the whole dock.
+            if (Surface(area, area, veil, sheen: false, frost: true) is not { } baked) return null;
             _screen = screen = (veil, image, baked);
         }
         localToScreen.Invert();
@@ -101,11 +102,12 @@ internal static class GlassLook
     /// <paramref name="screen"/> on the screen; null when there is no wallpaper to show. The layers are drawn once
     /// into a small picture (half size: it is soft anyway), so an animated shape or a growing icon only copies
     /// pixels instead of scaling the wallpaper again on every frame. <paramref name="frost"/>: the nearly grey
-    /// picture (dock and its cards); otherwise the wallpaper's own colours (cards on the desktop).
+    /// picture (the dock, what grows out of it, the app screen); otherwise the wallpaper's own colours, toned down
+    /// (the desktop cards).
     /// </summary>
     public static Brush? Surface(Rect local, Rect screen, Color veil, bool sheen, Transform? transform = null, bool frost = true)
     {
-        if (WallpaperGlass.Image is not { } image || local.Width <= 0 || local.Height <= 0) return null;
+        if ((frost ? WallpaperGlass.Grey : WallpaperGlass.Image) is not { } image || local.Width <= 0 || local.Height <= 0) return null;
         const double Resolution = 0.5;
         const double Bleed = 4; // drawn a little larger, so the soft edge of the scaled picture stays outside the shape
         var area = Rect.Inflate(local, Bleed, Bleed);

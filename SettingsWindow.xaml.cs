@@ -65,6 +65,12 @@ public partial class SettingsWindow : Window
         AddHandler(ToggleButton.CheckedEvent, new RoutedEventHandler(PreferenceEdited));
         AddHandler(ToggleButton.UncheckedEvent, new RoutedEventHandler(PreferenceEdited));
         _initializing = false;
+        // The look (dark or light, and the theme) changes the dock at once, without Apply: one tap shows it on the
+        // real dock, which is how a theme is judged.
+        foreach (var choice in StylePicker.Children.OfType<System.Windows.Controls.RadioButton>())
+            choice.Checked += (_, _) => SaveLook(_preferences.Current with { Style = (string)choice.Tag }, _applied with { Style = (string)choice.Tag });
+        DarkTheme.Checked += (_, _) => SaveLook(_preferences.Current with { Theme = AppTheme.Dark }, _applied with { Theme = AppTheme.Dark });
+        LightTheme.Checked += (_, _) => SaveLook(_preferences.Current with { Theme = AppTheme.Light }, _applied with { Theme = AppTheme.Light });
         UpdateApplyState();
     }
 
@@ -120,7 +126,6 @@ public partial class SettingsWindow : Window
         AnimationsToggle.IsChecked = settings.AnimationsEnabled;
         GenieToggle.IsChecked = settings.GenieEffectEnabled;
         PreviewsToggle.IsChecked = settings.PreviewsEnabled;
-        NotchBrowserToggle.IsChecked = settings.NotchBrowser;
         DockGlassToggle.IsChecked = settings.DockGlass;
         BadgesToggle.IsChecked = settings.NotificationBadgesEnabled;
         DockHudToggle.IsChecked = settings.DockHud;
@@ -264,7 +269,6 @@ public partial class SettingsWindow : Window
             AnimationsEnabled = Pick(AnimationsToggle.IsChecked == true, shown.AnimationsEnabled, now.AnimationsEnabled),
             GenieEffectEnabled = Pick(GenieToggle.IsChecked == true, shown.GenieEffectEnabled, now.GenieEffectEnabled),
             PreviewsEnabled = Pick(PreviewsToggle.IsChecked == true, shown.PreviewsEnabled, now.PreviewsEnabled),
-            NotchBrowser = Pick(NotchBrowserToggle.IsChecked == true, shown.NotchBrowser, now.NotchBrowser),
             DockGlass = Pick(DockGlassToggle.IsChecked == true, shown.DockGlass, now.DockGlass),
             NotificationBadgesEnabled = Pick(BadgesToggle.IsChecked == true, shown.NotificationBadgesEnabled, now.NotificationBadgesEnabled),
             DockHud = Pick(DockHudToggle.IsChecked == true, shown.DockHud, now.DockHud),
@@ -395,27 +399,12 @@ public partial class SettingsWindow : Window
             MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes;
     }
 
-    /// <summary>One chip per look: three dots of its colours and its name.</summary>
+    /// <summary>One chip per look: a tiny dock in its colours (its strip, its edge, four app squares) and its name.</summary>
     private void BuildStylePicker()
     {
         foreach (var look in ThemeStyles.All)
         {
-            var dots = new System.Windows.Controls.Border
-            {
-                CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(4, 3, 4, 3),
-                Margin = new Thickness(0, 0, 8, 0),
-                Background = new System.Windows.Media.SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(
-                    look.Id == ThemeStyles.Glass ? "#33FFFFFF" : look.DockTop))
-            };
-            var row = new System.Windows.Controls.StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
-            foreach (var hex in look.Swatch)
-                row.Children.Add(new System.Windows.Shapes.Ellipse
-                {
-                    Width = 7, Height = 7, Margin = new Thickness(1, 0, 1, 0),
-                    Fill = new System.Windows.Media.SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(hex))
-                });
-            dots.Child = row;
+            var dots = MiniDock(look);
             var content = new System.Windows.Controls.StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
             content.Children.Add(dots);
             content.Children.Add(new System.Windows.Controls.TextBlock { Text = look.Name, VerticalAlignment = VerticalAlignment.Center });
@@ -424,6 +413,47 @@ public partial class SettingsWindow : Window
             System.Windows.Automation.AutomationProperties.SetName(choice, look.Name);
             StylePicker.Children.Add(choice);
         }
+    }
+
+    private static System.Windows.Controls.Border MiniDock(ThemeStyle look)
+    {
+        static System.Windows.Media.Color C(string hex) => (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(hex);
+        static System.Windows.Media.Brush Solid(string hex) => new System.Windows.Media.SolidColorBrush(C(hex));
+        var glass = look.Id == ThemeStyles.Glass;
+        // Glass: a grey frost with a light rim, as the dock shows it.
+        var (top, bottom, edge) = glass ? ("#FF6A7079", "#FF464B52", "#66FFFFFF") : (look.DockTop, look.DockBottom, look.Edge);
+        var row = new System.Windows.Controls.StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        foreach (var hex in look.Swatch.Append(glass ? "#FFFF6B8B" : look.Accent).Take(4))
+            row.Children.Add(new System.Windows.Controls.Border
+            {
+                Width = 8, Height = 8, CornerRadius = new CornerRadius(2.2), Margin = new Thickness(1.5, 0, 1.5, 0),
+                Background = Solid(hex),
+                BorderBrush = Solid(look.Base == Models.AppTheme.Light && !glass ? "#22000000" : "#00000000"),
+                BorderThickness = new Thickness(0.6)
+            });
+        return new System.Windows.Controls.Border
+        {
+            CornerRadius = new CornerRadius(5.5),
+            Padding = new Thickness(3.5, 4, 3.5, 4),
+            Margin = new Thickness(0, 0, 9, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Background = new System.Windows.Media.LinearGradientBrush(C(top), C(bottom), 90),
+            BorderBrush = Solid(edge),
+            BorderThickness = new Thickness(1),
+            Child = row
+        };
+    }
+
+    private void SaveLook(DockSettings saved, DockSettings shown)
+    {
+        if (_initializing || saved == _preferences.Current) return;
+        _applied = shown; // what this window shows as saved, so the look no longer counts as an unapplied edit
+        if (_preferences.Save(saved) is { } error)
+        {
+            ShowResult(UiText.LocalizeError(error), error: true);
+            return;
+        }
+        UpdateApplyState();
     }
 
     private string SelectedStyle() =>

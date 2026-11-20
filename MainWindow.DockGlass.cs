@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Media;
 using System.Windows.Threading;
 using QiDock.Services;
@@ -44,15 +44,20 @@ public partial class MainWindow
                     _dockGlassWallpaper.Start();
                 });
             };
+            WallpaperGallery.Applied += () =>
+            {
+                _dockGlassWallpaper.Stop();
+                _dockGlassWallpaper.Start();
+            };
             Closed += (_, _) => _dockGlassWallpaper.Stop();
         }
         _dockGlassOn = _preferences.Current.DockGlass;
-        if (_dockGlassOn) WallpaperGlass.Refresh();
         RefreshDockGlass();
     }
 
     /// <summary>
-    /// Glass when it is on (the same look as the desktop cards), the theme's material otherwise. The dock places the
+    /// Glass when it is on and the theme is "Cam" (the other themes bring their own colours to the dock: under glass
+    /// only their writing changed), the theme's material otherwise. The dock places the
     /// one picture of the screen behind itself, so its growing, shrinking and sliding never draw the glass again.
     /// </summary>
     private void RefreshDockGlass()
@@ -60,7 +65,9 @@ public partial class MainWindow
         var standing = EdgePanel.StandsOnDock && !_panelOnTopBar;
         var before = (GlassLook.DockVeil, GlassLook.WindowBehind);
         GlassLook.WindowBehind = _autoHideController?.WindowBehind == true;
-        if (!_dockGlassOn || WallpaperGlass.Image is null || DockToScreen() is not { } toScreen)
+        var glass = _dockGlassOn && ThemeManager.CurrentStyle == ThemeStyles.Glass;
+        if (glass && WallpaperGlass.Image is null) WallpaperGlass.Refresh();
+        if (!glass || WallpaperGlass.Image is null || DockToScreen() is not { } toScreen)
         {
             GlassLook.DockVeil = null;
             GlassLook.Tiles(Resources, false);

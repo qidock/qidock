@@ -18,6 +18,7 @@ public sealed class ControlCenterWidget : DockWidget
         _tile = Ui.Tile(icon, (_, _) => ControlCenter.Shared.ToggleFrom(_tile!), horizontalPadding: 0);
         _tile.SetResourceReference(FrameworkElement.WidthProperty, "WidgetTileHeight");
         _tile.ToolTip = UiText.Get("ControlCenterTitle");
+        _tile.MouseEnter += (_, _) => ControlCenter.Prepare(); // read ahead, so the panel opens complete
         System.Windows.Automation.AutomationProperties.SetName(_tile, UiText.Get("ControlCenterTitle"));
     }
 

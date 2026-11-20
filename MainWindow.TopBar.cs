@@ -37,7 +37,6 @@ public partial class MainWindow
         _topBar.LiveChanged += (_, live) => _widgetBar.SetLive(live || WidgetsInDock && DockOnScreen);
         _topBar.MenuRequested += (_, _) => ShowDockMenu(PlacementMode.MousePoint, null);
         _topBar.SetPeekEnabled(_preferences.Current.TopBarPeek);
-        ApplyNotchBrowser();
         ApplyDockGlass();
         _widgetBar.SetLive(false);
         ApplyWidgetPlacement();

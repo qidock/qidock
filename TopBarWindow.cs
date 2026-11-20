@@ -327,8 +327,6 @@ public sealed class TopBarWindow : Window
 
     private bool WithinBarSpan(int x)
     {
-        // The middle of the edge opens the notch browser instead.
-        if (Browser.NotchBrowser.InZone(x)) return false;
         var screenWidth = GetSystemMetrics(0);
         var halfSpan = Math.Max(screenWidth * 0.18, ActualWidth * DpiScale() / 2);
         return Math.Abs(x - screenWidth / 2.0) <= halfSpan;

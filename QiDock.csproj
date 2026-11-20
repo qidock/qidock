@@ -9,8 +9,9 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>QiDock</AssemblyName>
     <RootNamespace>QiDock</RootNamespace>
-    <Version>0.3.0</Version>
+    <Version>0.4.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets/QiDock.ico</ApplicationIcon>
     <Product>QiDock</Product>
     <AssemblyTitle>QiDock</AssemblyTitle>
     <Company>QiDock</Company>
@@ -26,7 +27,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
   </ItemGroup>
 
 </Project>

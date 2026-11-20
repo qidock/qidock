@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -43,6 +43,89 @@ public sealed partial class MediaWidget
         ToggleCard();
         OpenAudio();
         FillCard();
+    }
+
+    /// <summary>
+    /// Debug pictures for the promotional videos: the card with a made-up song (its cover given here, nothing read from
+    /// the browser or the player), tinted from the cover as on the screen.
+    /// </summary>
+    internal void RehearsePromo(string title, string artist, BitmapSource cover)
+    {
+        _playPause.Content = Ui.Glyph("GlyphPause", 11);
+        _idle = false;
+        SetVisible(true);
+        ToggleCard();
+        RehearseNowPlaying(title, artist, cover);
+    }
+
+    /// <summary>Debug pictures: another made-up song is playing now.</summary>
+    internal void RehearseNowPlaying(string title, string artist, BitmapSource cover)
+    {
+        _title.Text = title;
+        _artist.Text = artist;
+        _art.Source = cover;
+        _playing = true;
+        TintCard(cover);
+        FillCard();
+        RehearseState(72, 228, 0.64);
+    }
+
+    /// <summary>Debug pictures: a made-up place in the song and volume (no player or speaker is asked).</summary>
+    private void RehearseState(double position, double length, double volume)
+    {
+        if (_seek is null || _volume is null) return;
+        _seek.Visibility = _times!.Visibility = Visibility.Visible;
+        _seek.Maximum = length;
+        _seek.Value = position;
+        _elapsed!.Text = Clock(position);
+        _remaining!.Text = "-" + Clock(length - position);
+        _settingVolume = true;
+        _volume.Value = Math.Round(volume * 100);
+        _settingVolume = false;
+        _volumeText!.Text = UiText.Percent((int)_volume.Value);
+        _volumeLabel!.Text = UiText.Get("MediaSystemVolume");
+        _volumeIcon!.Data = (Geometry)Application.Current.FindResource("IconVolume");
+    }
+
+    /// <summary>Debug pictures: the playlist scrolled as <see cref="FillBack"/> scrolls it (the playing song, or
+    /// <paramref name="song"/>, near the top).</summary>
+    internal void RehearseScrollToCurrent(int? song = null)
+    {
+        if (_playedList is null || _backScroll is null) return;
+        var index = song ?? _playlist.ToList().FindIndex(item => item.Current);
+        if (index < 0 || index >= _playedList.Children.Count) return;
+        var offset = Math.Max(0, _playedList.Children[index].TranslatePoint(new Point(), _playedList).Y - 50);
+        _backScroll.ScrollToVerticalOffset(offset);
+        // Off screen the scroll request waits for a layout pass that never comes: move the content at once.
+        _backScroll.ApplyTemplate();
+        if (_backScroll.Template?.FindName("PART_ScrollContentPresenter", _backScroll) is System.Windows.Controls.Primitives.IScrollInfo presenter)
+            presenter.SetVerticalOffset(offset);
+        _backScroll.UpdateLayout();
+    }
+
+    /// <summary>Debug pictures: the card turned to a made-up playlist, as <see cref="Flip"/> does (same size, the
+    /// playing song near the top when <paramref name="scroll"/>).</summary>
+    internal void RehearsePlaylist(IReadOnlyList<(string Title, string Channel, ImageSource Cover)> songs, int current, bool scroll)
+    {
+        if (_front is null || _back is null) return;
+        _playlist = songs.Select((song, index) =>
+        {
+            var id = $"promo{index}";
+            Thumbnails[id] = song.Cover;
+            return new PlaylistSong(id, index + 1, song.Title, song.Channel, index == current, null!);
+        }).ToList();
+        _flipped = true;
+        FillBack(scrollToCurrent: scroll);
+        _back.Height = _front.ActualHeight;
+        _front.Visibility = Visibility.Hidden;
+        _back.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>Debug pictures: the card part-way through its turn (1 = flat, 0 = edge on).</summary>
+    internal void RehearseTurn(double scaleX)
+    {
+        _turn.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        _turn.ScaleX = scaleX;
     }
 #endif
 
@@ -234,6 +317,7 @@ public sealed partial class MediaWidget
     private IReadOnlyList<PlaylistSong> _playlist = [];
     private System.Windows.Automation.AutomationElement? _hiddenTab;
     private int _playlistRead;
+    private static bool _wheelSeen;
     // YouTube's small pictures, kept while QiDock runs (a few kilobytes each) so the list does not load them again.
     private static readonly Dictionary<string, ImageSource> Thumbnails = [];
 
@@ -257,7 +341,7 @@ public sealed partial class MediaWidget
         if (_played.Count > 20) _played.RemoveAt(_played.Count - 1);
         if (!_flipped) return;
         FillBack();
-        if (index != 0) ReadPlaylist(); // another song: the list moved on
+        if (index != 0) ReadPlaylist(tries: 3); // another song: the list moved on
     }
 
     /// <summary>
@@ -289,6 +373,7 @@ public sealed partial class MediaWidget
 
     private async void PlaySong(PlaylistSong song)
     {
+        AppLog.Write($"Playlist: song {song.Index} chosen on the music card");
         if (!await BrowserPlaylist.PlayAsync(song)) return;
         _playlist = _playlist.Select(s => s with { Current = s.Index == song.Index }).ToList();
         FillBack();
@@ -359,8 +444,45 @@ public sealed partial class MediaWidget
         scroll.PreviewMouseWheel += (_, e) =>
         {
             e.Handled = true;
+            if (!_wheelSeen)
+            {
+                _wheelSeen = true;
+                Services.AppLog.Write($"Music card: wheel works (step {e.Delta})");
+            }
             scroll.ScrollToVerticalOffset(Math.Clamp(scroll.VerticalOffset - e.Delta * 0.6, 0, scroll.ScrollableHeight));
         };
+        // The list can also be dragged up and down (a touchpad that sends no wheel steps, or a finger). A press that
+        // hardly moves stays a click on the song.
+        Point? pressed = null;
+        var startOffset = 0.0;
+        var dragging = false;
+        scroll.PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            pressed = e.GetPosition(scroll);
+            startOffset = scroll.VerticalOffset;
+            dragging = false;
+        };
+        scroll.PreviewMouseMove += (_, e) =>
+        {
+            if (pressed is not { } start || e.LeftButton != MouseButtonState.Pressed) return;
+            var moved = e.GetPosition(scroll).Y - start.Y;
+            if (!dragging && Math.Abs(moved) < 6) return;
+            if (!dragging)
+            {
+                dragging = true;
+                scroll.CaptureMouse();
+            }
+            scroll.ScrollToVerticalOffset(Math.Clamp(startOffset - moved, 0, scroll.ScrollableHeight));
+        };
+        scroll.PreviewMouseLeftButtonUp += (_, e) =>
+        {
+            pressed = null;
+            if (!dragging) return;
+            dragging = false;
+            scroll.ReleaseMouseCapture();
+            e.Handled = true; // a drag is not a click on the song under the pointer
+        };
+        scroll.LostMouseCapture += (_, _) => dragging = false;
         var panel = new DockPanel { LastChildFill = true };
         panel.Children.Add(top);
         panel.Children.Add(scroll);
@@ -479,7 +601,8 @@ public sealed partial class MediaWidget
             if (_flipped)
             {
                 FillBack(scrollToCurrent: true);
-                ReadPlaylist();
+                // Chrome builds its screen-reader view of the page only when first asked: the first look can be empty.
+                ReadPlaylist(tries: 4);
                 _back.Height = _front.ActualHeight; // the card keeps its size
                 _front.Visibility = Visibility.Hidden;
                 _back.Visibility = Visibility.Visible;
@@ -489,6 +612,7 @@ public sealed partial class MediaWidget
                 _front.Visibility = Visibility.Visible;
                 _back.Visibility = Visibility.Collapsed;
             }
+            WheelHook(_flipped);
         }
         if (!animate)
         {

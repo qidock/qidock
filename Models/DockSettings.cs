@@ -43,7 +43,6 @@ public sealed record DockSettings(
     bool Magnify = false,
     double MagnifyScale = 1.85,
     bool LowMemory = false,
-    bool NotchBrowser = true,
     bool DockGlass = true,
     double DockScale = 1.0)
 {

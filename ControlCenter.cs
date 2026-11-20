@@ -32,7 +32,8 @@ public sealed partial class ControlCenter : EdgePanel
     private readonly AudioEndpoint _audio = new();
     private readonly RadioControls _radios = new();
     private readonly DispatcherTimer _brightnessDelay = new() { Interval = TimeSpan.FromMilliseconds(120) };
-    private bool _radiosStarted;
+    private Task? _radiosReady;
+    private bool _builtWithRadios;
     private int _pendingBrightness = -1;
     private Slider? _volumeSlider;
     private AudioEndpoint.State? _shownVolume;
@@ -56,13 +57,8 @@ public sealed partial class ControlCenter : EdgePanel
     protected override async void OnOpened()
     {
         var shown = Brightness.Current;
-        var work = new List<Task> { Brightness.RefreshAsync(), Task.Delay(480) };
-        var firstRadios = !_radiosStarted;
-        if (firstRadios)
-        {
-            _radiosStarted = true;
-            work.Add(_radios.InitializeAsync());
-        }
+        _radiosReady ??= _radios.InitializeAsync();
+        var work = new List<Task> { Brightness.RefreshAsync(), Task.Delay(480), _radiosReady };
         try { await Task.WhenAll(work); }
         catch (Exception ex)
         {
@@ -73,7 +69,17 @@ public sealed partial class ControlCenter : EdgePanel
         AudioEndpoint.State? volume;
         try { volume = await AudioEndpoint.ReadInBackgroundAsync(); }
         catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or InvalidCastException) { volume = _shownVolume; }
-        if (firstRadios || Brightness.Current != shown || volume != _shownVolume) Refresh();
+        if (!_builtWithRadios || Brightness.Current != shown || volume != _shownVolume) Refresh();
+    }
+
+    /// <summary>
+    /// Reads what the panel shows (brightness, the radios) ahead of time, when the pointer comes onto the button: the
+    /// panel then opens complete instead of growing a row a moment later.
+    /// </summary>
+    public static void Prepare()
+    {
+        if (!Brightness.Known) _ = Brightness.RefreshAsync();
+        Shared._radiosReady ??= Shared._radios.InitializeAsync();
     }
 
     /// <summary>The volume keys (or another app) changed the volume: the open panel's slider follows.</summary>
@@ -113,6 +119,7 @@ public sealed partial class ControlCenter : EdgePanel
     protected override void Build()
     {
         Cards.Children.Clear();
+        _builtWithRadios = _radiosReady?.IsCompleted == true;
         var top = new Grid { Width = CardWidth, Margin = new Thickness(0, 0, 0, 10), Tag = "top" };
         top.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Half) });
         top.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) });
@@ -142,8 +149,12 @@ public sealed partial class ControlCenter : EdgePanel
         if (_showNetworks) Cards.Children.Add(Keyed("networks", NetworksCard()));
 
         Cards.Children.Add(Keyed("volume", VolumeCard()));
-        if (Brightness.Current is { } level) Cards.Children.Add(Keyed("brightness", BrightnessCard(level)));
-        if (BatteryStatus.Read() is { } battery) Cards.Children.Add(Keyed("battery", BatteryCard(battery)));
+        var battery = BatteryStatus.Read();
+        // Not read yet on a laptop (its screen has a brightness): the row keeps its place from the start, so the
+        // panel does not jump when the level arrives.
+        var level = Brightness.Current ?? (!Brightness.Known && battery is not null ? 100 : null);
+        if (level is { } shownLevel) Cards.Children.Add(Keyed("brightness", BrightnessCard(shownLevel)));
+        if (battery is { } state) Cards.Children.Add(Keyed("battery", BatteryCard(state)));
         Cards.Children.Add(Keyed("shortcuts", Shortcuts()));
     }
 
@@ -409,6 +420,9 @@ internal static class Brightness
     /// <summary>The last level read, or null when there is no adjustable display.</summary>
     public static int? Current { get; private set; }
 
+    /// <summary>Whether it has been read at least once (until then <see cref="Current"/> says nothing).</summary>
+    public static bool Known { get; private set; }
+
     public static Task RefreshAsync() => _unsupported ? Task.CompletedTask : Task.Run(() =>
     {
         try
@@ -416,6 +430,7 @@ internal static class Brightness
             foreach (dynamic item in Query("SELECT CurrentBrightness FROM WmiMonitorBrightness WHERE Active=TRUE"))
             {
                 Current = Convert.ToInt32(item.Properties_.Item("CurrentBrightness").Value);
+                Known = true;
                 return;
             }
             _unsupported = true;
@@ -425,6 +440,7 @@ internal static class Brightness
             System.Diagnostics.Trace.TraceWarning("Brightness unavailable: {0}", ex.Message);
         }
         Current = null;
+        Known = true;
     });
 
     private static readonly object Gate = new();

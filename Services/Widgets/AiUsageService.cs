@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -43,6 +43,9 @@ public sealed partial class AiUsageService
     public AiUsageService()
     {
         Cached = LastKnown();
+#if DEBUG
+        if (Promo.On) Cached = Promo.Ai();
+#endif
         _claude = Cached.FirstOrDefault(u => u.Provider == ClaudeId);
         _gemini = Cached.FirstOrDefault(u => u.Provider == GeminiId);
         _openCode = Cached.FirstOrDefault(u => u.Provider == OpenCodeId);
@@ -56,6 +59,9 @@ public sealed partial class AiUsageService
 
     public async Task<IReadOnlyList<ProviderUsage>> FetchAsync(bool force, CancellationToken token)
     {
+#if DEBUG
+        if (Promo.On) return Promo.Ai();
+#endif
         var results = new List<ProviderUsage>();
         var claude = await GetClaudeAsync(force, token).ConfigureAwait(false);
         if (claude is not null) results.Add(claude);

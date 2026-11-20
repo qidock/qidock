@@ -15,6 +15,27 @@ QiDock turns the Windows 10 and 11 taskbar into a floating glass dock with a wid
 | ![Fourteen dock styles](docs/images/dock-styles.png) | ![AI usage limits](docs/images/ai-limits.png) |
 | **14 dock styles** | **AI limits** for Claude, with Gemini and Codex a click away |
 
+### New in 0.4.0
+
+| | |
+|:---:|:---:|
+| ![Apps screen](docs/images/features/01-apps-screen-horizontal.png) | ![Files](docs/images/features/02-files-horizontal.png) |
+| **Apps screen**: all your apps, the ones you use most up front | **Files**: a fast file manager that shows what takes up space |
+| ![Wallpaper gallery](docs/images/features/03-wallpaper-gallery-horizontal.png) | ![Updater](docs/images/features/04-updater-horizontal.png) |
+| **Wallpaper gallery**: fresh 4K pictures every day | **Updater**: finds, downloads and installs new versions |
+| ![Themes](docs/images/features/05-themes-horizontal.png) | ![Glass look](docs/images/features/06-glass-look-horizontal.png) |
+| **14 themes** for the dock, panels and tools | **Glass look** that takes on your wallpaper's colours |
+| ![Keyboard dock](docs/images/features/07-keyboard-dock-horizontal.png) | ![Sharp icons](docs/images/features/08-sharp-icons-horizontal.png) |
+| **Keyboard dock**: Alt+Shift+D, arrows, Enter | **Sharp icons** at your screen's full resolution |
+| ![Playlist](docs/images/features/09-playlist-horizontal.png) | ![Big clock](docs/images/features/10-big-clock-horizontal.png) |
+| **Playlist** of what's playing, right in the music card | **Big clock** on the desktop in six styles |
+| ![Bluetooth batteries](docs/images/features/11-bluetooth-batteries-horizontal.png) | ![CPU usage](docs/images/features/12-cpu-usage-horizontal.png) |
+| **Bluetooth batteries** of your mouse, keyboard and headphones | **CPU usage**: the apps using your processor most |
+| ![AI limits](docs/images/features/13-ai-limits-horizontal.png) | |
+| **AI limits** for Claude, Codex, Gemini and OpenCode | |
+
+Portrait versions of these pictures (for phones and stories) are in [docs/images/features](docs/images/features).
+
 ---
 
 ## Features

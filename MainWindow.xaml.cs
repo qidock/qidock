@@ -1778,7 +1778,6 @@ public partial class MainWindow : Window
         ApplyWidgetPlacement();
         ApplyDockEdge();
         _topBar?.SetPeekEnabled(_preferences.Current.TopBarPeek);
-        ApplyNotchBrowser();
         ApplyDockGlass();
         _deskWidgets?.SettingsChanged();
         ApplyToastHiding();
@@ -1948,16 +1947,9 @@ public partial class MainWindow : Window
         if (_appliedEdge is { } edge && edge != Models.DockEdge.Bottom) OrientAllIcons();
     }
 
-    private void ApplyNotchBrowser()
-    {
-        Browser.NotchBrowser.Animations = _preferences.Current.AnimationsEnabled;
-        Browser.NotchBrowser.SetEnabled(_preferences.Current.NotchBrowser);
-    }
-
     private void OnFullScreenChanged(bool suppressed)
     {
         _topBar?.SetSuppressed(suppressed);
-        Browser.NotchBrowser.Suppressed = suppressed;
         if (!suppressed) return;
         _widgetBar.ClosePopups();
         _previewCloseTimer.Stop();

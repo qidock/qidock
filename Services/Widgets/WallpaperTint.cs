@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -19,6 +19,9 @@ internal static class WallpaperTint
     /// <summary>The current wallpaper as Windows stores it for the desktop (also when a slideshow changes it).</summary>
     internal static string? WallpaperFile()
     {
+#if DEBUG
+        if (Promo.Wallpaper is { } promo) return promo;
+#endif
         var transcoded = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Microsoft", "Windows", "Themes", "TranscodedWallpaper");
         if (File.Exists(transcoded)) return transcoded;
         var path = Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\Control Panel\Desktop", "WallPaper", null) as string;

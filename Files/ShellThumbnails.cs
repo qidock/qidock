@@ -164,7 +164,15 @@ internal static class ShellThumbnails
         }
         if (!anyAlpha)
             for (var i = 3; i < pixels.Length; i += 4) pixels[i] = 255;
-        var source = BitmapSource.Create(width, height, 96, 96, PixelFormats.Pbgra32, null, pixels, width * 4);
+        // Icons usually come with plain (not premultiplied) transparency; read as premultiplied their soft edges glow
+        // white or pink. A colour stronger than its own opacity can only be plain transparency.
+        var plain = false;
+        for (var i = 0; i < pixels.Length && !plain; i += 4)
+        {
+            var alpha = pixels[i + 3];
+            plain = pixels[i] > alpha || pixels[i + 1] > alpha || pixels[i + 2] > alpha;
+        }
+        var source = BitmapSource.Create(width, height, 96, 96, plain ? PixelFormats.Bgra32 : PixelFormats.Pbgra32, null, pixels, width * 4);
         source.Freeze();
         return source;
     }

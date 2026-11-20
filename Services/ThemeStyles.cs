@@ -101,6 +101,7 @@ public static class ThemeStyles
         d["PanelTile"] = S(Alpha(style.Tile, 0xE6));
         d["PanelTileHover"] = S(style.Tile);
         d["PanelTileStroke"] = S(style.TileStroke);
+        ThemePatterns.Add(d, style);
         return d;
     }
 }

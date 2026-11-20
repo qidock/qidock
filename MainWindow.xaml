@@ -177,6 +177,11 @@
             <Border.Effect>
                 <DropShadowEffect Color="#000000" BlurRadius="20" ShadowDepth="3" Direction="270" Opacity="0.38" RenderingBias="Performance" />
             </Border.Effect>
+        <Grid>
+            <!-- The theme's own texture and bottom band (none for Glass), under the icons, over the dock's colour. -->
+            <Border Margin="-8,0,-8,0" CornerRadius="17" Background="{DynamicResource DockPattern}" IsHitTestVisible="False" />
+            <Border Margin="-8,0,-8,0" CornerRadius="0,0,17,17" VerticalAlignment="Bottom" Height="{DynamicResource DockBandHeight}"
+                    Background="{DynamicResource DockBand}" IsHitTestVisible="False" />
         <ctl:UnclippedStackPanel x:Name="DockRow" Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
         <ctl:UnclippedStackPanel x:Name="DockContents" Orientation="Horizontal" HorizontalAlignment="Left"
                     VerticalAlignment="Center">
@@ -395,6 +400,7 @@
         </ctl:UnclippedStackPanel>
         <ContentControl x:Name="WidgetHost" VerticalAlignment="Top" Margin="2,1,0,0" Focusable="False" Visibility="Collapsed" />
         </ctl:UnclippedStackPanel>
+        </Grid>
     </Border>
     <Border x:Name="DockEdgeTrigger" Grid.Row="1" VerticalAlignment="Bottom" Height="2" Background="#01000000"
             MouseEnter="DockEdgeTrigger_MouseEnter" MouseLeave="DockEdgeTrigger_MouseLeave" />

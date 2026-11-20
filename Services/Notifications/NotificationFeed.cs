@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -355,6 +355,16 @@ public static class NotificationApps
         finally { Marshal.ReleaseComObject(item); }
     }
 
+#if DEBUG
+    /// <summary>A program file's icon as the dock would show it (debug pictures of old programs' icons).</summary>
+    internal static BitmapSource? LoadFileIcon(string path, int size, bool exact)
+    {
+        if (SHCreateItemFromParsingName(path, 0, typeof(IShellItem).GUID, out var item) != 0 || item is null) return null;
+        try { return ImageOf(item, size, exact); }
+        finally { Marshal.ReleaseComObject(item); }
+    }
+#endif
+
     private static BitmapSource? ImageOf(IShellItem item, int size, bool exact = false)
     {
         // "Bigger is fine": Windows hands over the icon's own largest picture, scaled here afterwards.
@@ -362,7 +372,62 @@ public static class NotificationApps
         BitmapSource? image;
         try { image = FromHBitmap(bitmap); }
         finally { DeleteObject(bitmap); }
-        return exact && image is not null ? Fit(image, size) : image;
+        if (!exact || image is null) return image;
+        // An old program with no large icon: Windows blows its small icon up (in coarse squares) inside a thin grey
+        // frame. Its own small picture, sharp, goes on a light tile instead, as macOS shows such apps.
+        if (size > 64 && Framed(image) && Natural(factory) is { } small) return Plate(small, size);
+        return Fit(image, size);
+    }
+
+    /// <summary>Whether this is Windows' grey frame around a small icon: a faint dark line, a white one, then nothing.</summary>
+    private static bool Framed(BitmapSource image)
+    {
+        int width = image.PixelWidth, height = image.PixelHeight;
+        if (width < 16 || height < 16) return false;
+        var pixels = new byte[width * height * 4];
+        var bgra = image.Format == System.Windows.Media.PixelFormats.Bgra32 || image.Format == System.Windows.Media.PixelFormats.Pbgra32 ? image : new FormatConvertedBitmap(image, System.Windows.Media.PixelFormats.Bgra32, null, 0);
+        bgra.CopyPixels(pixels, width * 4, 0);
+        byte Alpha(int x, int y) => pixels[(y * width + x) * 4 + 3];
+        bool Dark(int x, int y) { var i = (y * width + x) * 4; return pixels[i + 3] is >= 20 and <= 70 && pixels[i] < 40 && pixels[i + 1] < 40 && pixels[i + 2] < 40; }
+        int midX = width / 2, midY = height / 2;
+        return Dark(0, midY) && Dark(width - 1, midY) && Dark(midX, 0) && Dark(midX, height - 1)
+            && Alpha(5, midY) == 0 && Alpha(width - 6, midY) == 0 && Alpha(midX, 5) == 0 && Alpha(midX, height - 6) == 0;
+    }
+
+    /// <summary>The largest picture of the icon that Windows gives without the frame (the icon's own pixels).</summary>
+    private static BitmapSource? Natural(IShellItemImageFactory factory)
+    {
+        foreach (var size in (ReadOnlySpan<int>)[96, 64, 48, 32])
+        {
+            if (factory.GetImage(new NativeSize(size, size), 0x4 /* icon only */, out var bitmap) != 0 || bitmap == 0) continue;
+            BitmapSource? image;
+            try { image = FromHBitmap(bitmap); }
+            finally { DeleteObject(bitmap); }
+            if (image is not null && !Framed(image)) return image;
+        }
+        return null;
+    }
+
+    /// <summary>A small icon on a light rounded tile of <paramref name="size"/> pixels, enlarged at most twice.</summary>
+    private static BitmapSource Plate(BitmapSource icon, int size)
+    {
+        var inset = Math.Round(size * 0.045);
+        var tile = new System.Windows.Rect(inset, inset, size - 2 * inset, size - 2 * inset);
+        var inner = Math.Min(icon.PixelWidth * 2.0, Math.Round(tile.Width * 0.64));
+        var fill = new System.Windows.Media.LinearGradientBrush(System.Windows.Media.Color.FromRgb(0xFB, 0xFB, 0xFC), System.Windows.Media.Color.FromRgb(0xE6, 0xE6, 0xEA), 90);
+        var visual = new System.Windows.Media.DrawingVisual();
+        System.Windows.Media.RenderOptions.SetBitmapScalingMode(visual, System.Windows.Media.BitmapScalingMode.HighQuality);
+        using (var dc = visual.RenderOpen())
+        {
+            var radius = tile.Width * 0.225;
+            dc.DrawRoundedRectangle(fill, new System.Windows.Media.Pen(new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(0x30, 0, 0, 0)), 1), tile, radius, radius);
+            var place = Math.Round((size - inner) / 2);
+            dc.DrawImage(Fit(icon, (int)inner), new System.Windows.Rect(place, place, inner, inner));
+        }
+        var result = new RenderTargetBitmap(size, size, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+        result.Render(visual);
+        result.Freeze();
+        return result;
     }
 
     /// <summary>
@@ -412,7 +477,17 @@ public static class NotificationApps
             for (var row = 0; row < height; row++) Buffer.BlockCopy(pixels, row * stride, flipped, (height - 1 - row) * stride, stride);
             pixels = flipped;
         }
-        var source = BitmapSource.Create(width, height, 96, 96, System.Windows.Media.PixelFormats.Pbgra32, null, pixels, stride);
+        // Windows hands most icons over with plain (not premultiplied) transparency. Read as premultiplied, the soft
+        // edge pixels came out far too bright: a white or pink rim around every icon. A colour stronger than its own
+        // opacity can only be plain transparency, so that decides how the pixels are read.
+        var plain = false;
+        for (var i = 0; i < pixels.Length && !plain; i += 4)
+        {
+            var alpha = pixels[i + 3];
+            plain = pixels[i] > alpha || pixels[i + 1] > alpha || pixels[i + 2] > alpha;
+        }
+        var format = plain ? System.Windows.Media.PixelFormats.Bgra32 : System.Windows.Media.PixelFormats.Pbgra32;
+        var source = BitmapSource.Create(width, height, 96, 96, format, null, pixels, stride);
         source.Freeze();
         return source;
     }

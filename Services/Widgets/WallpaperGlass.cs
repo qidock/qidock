@@ -6,7 +6,7 @@ using System.Windows.Media.Imaging;
 namespace QiDock.Services.Widgets;
 
 /// <summary>
-/// The wallpaper as frosted glass sees it: read once, small (256 pixels wide), softened and a little more colourful,
+/// The wallpaper as frosted glass sees it: read once, small (256 pixels wide), softened and with its colours toned down,
 /// shared by every desktop card. A card shows the part of it that lies behind the card, so the glass looks through
 /// to the picture without any live blur (nothing is redrawn while the desktop stays the same).
 /// </summary>
@@ -20,6 +20,9 @@ internal static class WallpaperGlass
     /// <summary>The softened wallpaper, or null when there is none to read (a plain colour).</summary>
     public static BitmapSource? Image { get; private set; }
 
+    /// <summary>The same picture with almost no colour left: neutral frosted glass (the app screen).</summary>
+    public static BitmapSource? Grey { get; private set; }
+
     /// <summary>Goes up each time the picture changes, so every user of it can tell (not only the first to ask).</summary>
     public static int Version { get; private set; }
 
@@ -31,6 +34,7 @@ internal static class WallpaperGlass
         {
             var had = Image is not null;
             Image = null;
+            Grey = null;
             if (had) Version++;
             _pixels = null;
             _stamp = "";
@@ -54,15 +58,21 @@ internal static class WallpaperGlass
             int w = converted.PixelWidth, h = converted.PixelHeight;
             var pixels = new byte[w * h * 4];
             converted.CopyPixels(pixels, w * 4, 0);
-            // Three box passes come close to a gaussian blur; then a touch more colour, as glass over a picture has.
+            // Three box passes come close to a gaussian blur. The colours are toned down, as frosted glass mutes what
+            // is behind it: at full strength a pink or purple wallpaper dyed every card, the dock and the app screen.
             for (var pass = 0; pass < 3; pass++)
             {
                 BoxBlur(pixels, w, h, 2, horizontal: true);
                 BoxBlur(pixels, w, h, 2, horizontal: false);
             }
-            Saturate(pixels, 1.3);
+            Saturate(pixels, 0.7);
             var bitmap = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, pixels, w * 4);
             bitmap.Freeze();
+            var greyPixels = (byte[])pixels.Clone();
+            Saturate(greyPixels, 0.12);
+            var grey = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, greyPixels, w * 4);
+            grey.Freeze();
+            Grey = grey;
             Image = bitmap;
             Version++;
             _pixels = pixels;
